@@ -42,6 +42,21 @@ These are not querystore gaps — they are migration work on the chartsearchai s
 1. **Per-type indices vs. single shared index.** querystore is `openmrs_obs`, `openmrs_condition`, etc. ([Decision 4](./adr.md#decision-4-per-type-indices-over-a-single-index)). chartsearchai's retrieval layer either queries the wildcard `openmrs_*` (recommended; promoted to the official cross-type convention by [Decision 13](./adr.md#decision-13-module-extension-spi-service-provider-interface-for-custom-resource-types)) or updates to multi-index queries.
 2. **Embedding model alignment.** querystore embeds at index time with the model picked under [Decision 8](./adr.md#decision-8-locale-specific-serialization-with-multilingual-embeddings) (multilingual-e5 class). chartsearchai must switch its query-time embedder to the same model — the embedding-model contract from [Decision 13](./adr.md#decision-13-module-extension-spi-service-provider-interface-for-custom-resource-types) applies to every consumer. Embeddings from different models are not comparable; mismatch produces silently broken kNN results.
 
+## Backend tier selection
+
+Querystore's backend is pluggable per [Decision 3](./adr.md#decision-3-pluggable-backend-spi-with-three-reference-implementations) — MySQL, embedded Lucene, or Elasticsearch — selected via the `querystore.backend` configuration property. chartsearchai's current four pipelines map onto this:
+
+| chartsearchai pipeline today | Closest querystore tier | Notes |
+|---|---|---|
+| `embedding` (MySQL embeddings + in-process keyword scoring) | `mysql` | querystore improves on this by using MySQL FULLTEXT for keyword rather than in-process scoring |
+| `lucene` (Lucene-only BM25, no embeddings) | not directly available | querystore's `lucene` tier always carries both BM25 and HNSW kNN — there is no embeddings-free option |
+| `hybrid` (MySQL embeddings + Lucene BM25, in-process RRF) | `lucene` | querystore stores both vectors and text in Lucene rather than splitting across MySQL and Lucene; functionally equivalent at the consumer layer |
+| `elasticsearch` (single shared ES index, RRF retriever) | `elasticsearch` | querystore restructures into per-type indices but keeps RRF fusion on the same retriever path |
+
+When chartsearchai migrates, each deployment picks one querystore tier. chartsearchai itself does not need to know which tier is running, because [Decision 14](./adr.md#decision-14-authorization-and-consumer-api-surface)'s `QueryStoreService` is tier-agnostic — the same Java API call returns results regardless of backend.
+
+CI eval implications: chartsearchai's existing eval dataset (153 records, query-recall benchmarks) was developed against ES-class hybrid retrieval. Running it against the default MySQL tier will report systematically lower recall/precision than ES, masking real regressions. The migration team must pick the eval tier explicitly — same as production, ES-pinned for fidelity, or all three for parity — when wiring up the eval suite against querystore. (See Decision 3 Consequences for the tier-drift concern.)
+
 ## What stays in chartsearchai unchanged
 
 All query-time logic stays where it is — orthogonal to whether the index lives in chartsearchai's process or in querystore:
