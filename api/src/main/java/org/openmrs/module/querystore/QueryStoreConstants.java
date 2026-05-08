@@ -15,6 +15,12 @@ public final class QueryStoreConstants {
 
 	public static final String INDEX_PREFIX = "openmrs_";
 
+	public static final String FIELD_PATIENT_UUID = "patient_uuid";
+
+	public static final String FIELD_RESOURCE_UUID = "resource_uuid";
+
+	public static final String FIELD_RECORD_DATE = "record_date";
+
 	public static final String INDEX_OBS = INDEX_PREFIX + "obs";
 	public static final String INDEX_CONDITION = INDEX_PREFIX + "condition";
 	public static final String INDEX_DIAGNOSIS = INDEX_PREFIX + "diagnosis";

@@ -11,8 +11,15 @@
            http://www.springframework.org/schema/tx
            http://www.springframework.org/schema/tx/spring-tx-4.3.xsd">
 
+    <bean id="querystore.backend"
+          class="org.openmrs.module.querystore.backend.mysql.MysqlBackendStore">
+        <constructor-arg ref="dataSource"/>
+    </bean>
+
     <bean id="queryStoreService"
-          class="org.openmrs.module.querystore.api.impl.QueryStoreServiceImpl"/>
+          class="org.openmrs.module.querystore.api.impl.QueryStoreServiceImpl">
+        <property name="backend" ref="querystore.backend"/>
+    </bean>
 
     <bean parent="serviceContext">
         <property name="moduleService">
