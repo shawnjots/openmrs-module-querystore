@@ -40,6 +40,7 @@ Other open questions (migration-time re-projection hook, event-handler idempoten
 - `omod/` — module packaging.
 - `docs/adr.md` — architectural decisions (authoritative).
 - `docs/migration-chartsearchai.md` — chartsearchai migration gap analysis.
+- `docs/chartsearchai-port-map.md` — implementation-phase pointer to which chartsearchai files are worth porting and which are not.
 - `pom.xml` — Maven build. Depends on OpenMRS Platform 2.8.0+.
 
 ## Workflow notes
