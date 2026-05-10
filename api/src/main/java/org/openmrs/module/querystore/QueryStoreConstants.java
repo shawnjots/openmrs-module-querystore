@@ -96,6 +96,12 @@ public final class QueryStoreConstants {
 	public static final String FIELD_DISPENSER_UUID = "dispenser_uuid";
 	public static final String FIELD_DISPENSER_NAME = "dispenser_name";
 
+	public static final String FIELD_LATERALITY = "laterality";
+	public static final String FIELD_CLINICAL_HISTORY = "clinical_history";
+	public static final String FIELD_INSTRUCTIONS = "instructions";
+	public static final String FIELD_SPECIMEN_SOURCE_UUID = "specimen_source_uuid";
+	public static final String FIELD_SPECIMEN_SOURCE_NAME = "specimen_source_name";
+
 	public static final String FIELD_ENCOUNTER_UUID = "encounter_uuid";
 	public static final String FIELD_ENCOUNTER_TYPE_UUID = "encounter_type_uuid";
 	public static final String FIELD_ENCOUNTER_TYPE_NAME = "encounter_type_name";
