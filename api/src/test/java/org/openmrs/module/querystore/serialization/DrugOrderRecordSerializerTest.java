@@ -13,12 +13,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.openmrs.module.querystore.serialization.ConceptFixtures.concept;
 
 import java.lang.reflect.Field;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.Set;
 import java.util.TimeZone;
 
@@ -26,7 +26,6 @@ import org.junit.Before;
 import org.junit.Test;
 import org.openmrs.CareSetting;
 import org.openmrs.Concept;
-import org.openmrs.ConceptName;
 import org.openmrs.Drug;
 import org.openmrs.DrugOrder;
 import org.openmrs.Encounter;
@@ -326,19 +325,6 @@ public class DrugOrderRecordSerializerTest {
 		f.setConcept(concept(name));
 		f.setUuid(uuid);
 		return f;
-	}
-
-	private static Concept concept(String name) {
-		Concept c = new Concept();
-		c.addName(conceptName(name));
-		return c;
-	}
-
-	private static ConceptName conceptName(String name) {
-		ConceptName cn = new ConceptName();
-		cn.setName(name);
-		cn.setLocale(Locale.ENGLISH);
-		return cn;
 	}
 
 	private static Provider providerNamed(String uuid, String givenName, String familyName) {

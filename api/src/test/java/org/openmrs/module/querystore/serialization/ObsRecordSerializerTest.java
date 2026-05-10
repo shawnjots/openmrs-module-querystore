@@ -14,6 +14,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.openmrs.module.querystore.serialization.ConceptFixtures.concept;
+import static org.openmrs.module.querystore.serialization.ConceptFixtures.conceptName;
+import static org.openmrs.module.querystore.serialization.ConceptFixtures.preferredName;
 
 import java.util.Arrays;
 import java.util.Calendar;
@@ -21,7 +24,6 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.TimeZone;
 
 import org.junit.Before;
@@ -29,7 +31,6 @@ import org.junit.Test;
 import org.openmrs.Concept;
 import org.openmrs.ConceptClass;
 import org.openmrs.ConceptDatatype;
-import org.openmrs.ConceptName;
 import org.openmrs.ConceptNumeric;
 import org.openmrs.Drug;
 import org.openmrs.Encounter;
@@ -307,25 +308,6 @@ public class ObsRecordSerializerTest {
 
 		assertEquals("patient-uuid", doc.getPatientUuid());
 		assertEquals("obs-uuid", doc.getResourceUuid());
-	}
-
-	private static Concept concept(String name) {
-		Concept c = new Concept();
-		c.addName(conceptName(name));
-		return c;
-	}
-
-	private static ConceptName conceptName(String name) {
-		ConceptName cn = new ConceptName();
-		cn.setName(name);
-		cn.setLocale(Locale.ENGLISH);
-		return cn;
-	}
-
-	private static ConceptName preferredName(String name) {
-		ConceptName cn = conceptName(name);
-		cn.setLocalePreferred(Boolean.TRUE);
-		return cn;
 	}
 
 	private static Obs obs(Concept concept) {

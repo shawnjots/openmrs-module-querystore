@@ -12,18 +12,19 @@ package org.openmrs.module.querystore.serialization;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.openmrs.module.querystore.serialization.ConceptFixtures.concept;
+import static org.openmrs.module.querystore.serialization.ConceptFixtures.conceptName;
+import static org.openmrs.module.querystore.serialization.ConceptFixtures.preferredName;
 
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
-import java.util.Locale;
 import java.util.TimeZone;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.openmrs.CodedOrFreeText;
 import org.openmrs.Concept;
-import org.openmrs.ConceptName;
 import org.openmrs.Condition;
 import org.openmrs.ConditionClinicalStatus;
 import org.openmrs.ConditionVerificationStatus;
@@ -219,25 +220,6 @@ public class ConditionRecordSerializerTest {
 		CodedOrFreeText cft = new CodedOrFreeText();
 		cft.setNonCoded(text);
 		return cft;
-	}
-
-	private static Concept concept(String name) {
-		Concept c = new Concept();
-		c.addName(conceptName(name));
-		return c;
-	}
-
-	private static ConceptName conceptName(String name) {
-		ConceptName cn = new ConceptName();
-		cn.setName(name);
-		cn.setLocale(Locale.ENGLISH);
-		return cn;
-	}
-
-	private static ConceptName preferredName(String name) {
-		ConceptName cn = conceptName(name);
-		cn.setLocalePreferred(Boolean.TRUE);
-		return cn;
 	}
 
 	private static Date utcDate(int year, int month, int day) {
