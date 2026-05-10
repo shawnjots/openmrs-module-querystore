@@ -25,6 +25,9 @@
     <bean id="querystore.serializer.obs"
           class="org.openmrs.module.querystore.serialization.ObsRecordSerializer"/>
 
+    <bean id="querystore.serializer.condition"
+          class="org.openmrs.module.querystore.serialization.ConditionRecordSerializer"/>
+
     <bean id="queryStoreService"
           class="org.openmrs.module.querystore.api.impl.QueryStoreServiceImpl">
         <property name="backend" ref="querystore.backend"/>

@@ -47,6 +47,14 @@ public final class QueryStoreConstants {
 	public static final String FIELD_OBS_GROUP_UUID = "obs_group_uuid";
 	public static final String FIELD_OBS_GROUP_CONCEPT_NAME = "obs_group_concept_name";
 
+	public static final String FIELD_NON_CODED = "non_coded";
+	public static final String FIELD_CLINICAL_STATUS = "clinical_status";
+	public static final String FIELD_VERIFICATION_STATUS = "verification_status";
+	public static final String FIELD_ONSET_DATE = "onset_date";
+	public static final String FIELD_END_DATE = "end_date";
+	public static final String FIELD_ADDITIONAL_DETAIL = "additional_detail";
+	public static final String FIELD_PREVIOUS_VERSION_UUID = "previous_version_uuid";
+
 	public static final String FIELD_ENCOUNTER_UUID = "encounter_uuid";
 	public static final String FIELD_ENCOUNTER_TYPE_UUID = "encounter_type_uuid";
 	public static final String FIELD_ENCOUNTER_TYPE_NAME = "encounter_type_name";
