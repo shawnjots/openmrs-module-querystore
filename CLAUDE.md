@@ -48,3 +48,11 @@ Other open questions (migration-time re-projection hook, event-handler idempoten
 - Update `docs/adr.md` as decisions change. Use the supersession convention rather than rewriting accepted decisions.
 - When you make an implementation choice the ADR doesn't address: either it's obvious from the principles above, or it's a new open question — add it.
 - chartsearchai's eval dataset (153 records, query-recall benchmarks) is a real, available end-to-end validator. Once a basic indexing path exists, re-running those evals against querystore is a fast way to catch design regressions.
+
+## Working norms
+
+- **Verify OpenMRS APIs against the jar.** When picking a `Concept`/`Obs`/`Encounter`/etc. method, confirm it exists by disassembling `~/.m2/repository/org/openmrs/api/openmrs-api/*/openmrs-api-*.jar` with `javap -p` (or `javap -c` for behavior) rather than relying on training-data recall. The 2.x line has subtle differences that don't always surface in docs — e.g., `Concept.getSynonyms(Locale)` uses strict `Locale.equals`, while `Concept.getName(Locale)` does language-level fallback. Inventing methods or fields that don't exist is a recurring failure mode.
+- **Promote emergent conventions to the ADR.** When two or more implementations of the same shape (per-type serializers, event handlers, backend backends, etc.) settle on the same pattern, capture the rule in the relevant Decision's conventions subsection so a fresh session re-derives it. Conventions that live only in conversation rot across sessions.
+- **Iterative review has a stopping rule.** Successive `/simplify` or `/review` passes converge to "nothing actionable" within ~3-5 rounds for a typical slice. If agents start re-flagging items prior passes addressed, or returning stylistic-only findings, stop and ship rather than inventing concerns. Diminishing returns are a signal to commit.
+- **Mirror the closest sibling.** A new implementation of an established shape should match the most-similar shipped one. Inventing a divergent shape for similar work is a smell — surface what justifies the divergence before writing code.
+- **Run `mvn -pl api install` before claiming success.** Compilation + test pass is the contract for "done." Surface real failures honestly rather than declaring partial success.
