@@ -133,6 +133,18 @@ public final class QueryStoreConstants {
 	public static final String FIELD_ROLE_UUID = "role_uuid";
 	public static final String FIELD_ROLE_NAME = "role_name";
 
+	public static final String FIELD_VISIT_TYPE_UUID = "visit_type_uuid";
+	public static final String FIELD_VISIT_TYPE_NAME = "visit_type_name";
+	public static final String FIELD_START_DATE_TIME = "start_date_time";
+	public static final String FIELD_END_DATE_TIME = "end_date_time";
+	public static final String FIELD_INDICATION_UUID = "indication_uuid";
+	public static final String FIELD_INDICATION_NAME = "indication_name";
+	public static final String FIELD_ENCOUNTER_UUIDS = "encounter_uuids";
+	public static final String FIELD_ATTRIBUTES = "attributes";
+	public static final String FIELD_TYPE_UUID = "type_uuid";
+	public static final String FIELD_TYPE_NAME = "type_name";
+	public static final String FIELD_VALUE = "value";
+
 	public static final String INDEX_OBS = INDEX_PREFIX + "obs";
 	public static final String INDEX_CONDITION = INDEX_PREFIX + "condition";
 	public static final String INDEX_DIAGNOSIS = INDEX_PREFIX + "diagnosis";

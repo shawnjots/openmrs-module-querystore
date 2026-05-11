@@ -26,6 +26,8 @@ public final class DateFormatUtil {
 
 	private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
+	private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+
 	private DateFormatUtil() {
 	}
 
@@ -34,6 +36,16 @@ public final class DateFormatUtil {
 			return "unknown";
 		}
 		return date.toInstant().atZone(UTC).toLocalDate().format(DATE_FORMAT);
+	}
+
+	// Returns null on null input — caller decides whether to omit the field. Diverges from
+	// formatDate's "unknown" fallback because timestamps are projected as optional metadata, not
+	// inlined into clinical text where omission would read as missing data.
+	public static String formatDateTime(Date date) {
+		if (date == null) {
+			return null;
+		}
+		return date.toInstant().atZone(UTC).toLocalDateTime().format(DATE_TIME_FORMAT);
 	}
 
 	public static LocalDate toLocalDate(Date date) {
