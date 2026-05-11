@@ -180,6 +180,16 @@ public final class QueryStoreConstants {
 
 	public static final String GP_BOOTSTRAP_AUTOSTART = "querystore.bootstrap.autostart";
 
+	public static final String GP_BACKEND = "querystore.backend";
+
+	public static final String BACKEND_MYSQL = "mysql";
+
+	public static final String BACKEND_LUCENE = "lucene";
+
+	public static final String BACKEND_ELASTICSEARCH = "elasticsearch";
+
+	public static final String DEFAULT_BACKEND = BACKEND_MYSQL;
+
 	public static final String GP_ELASTICSEARCH_HOST = "querystore.elasticsearch.host";
 	public static final String GP_ELASTICSEARCH_PORT = "querystore.elasticsearch.port";
 	public static final String GP_ELASTICSEARCH_SCHEME = "querystore.elasticsearch.scheme";

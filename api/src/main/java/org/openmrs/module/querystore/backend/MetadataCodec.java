@@ -7,7 +7,7 @@
  * Copyright (C) OpenMRS Inc. OpenMRS is a registered trademark and the OpenMRS
  * graphic logo is a trademark of OpenMRS Inc.
  */
-package org.openmrs.module.querystore.backend.mysql;
+package org.openmrs.module.querystore.backend;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -19,11 +19,14 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 /**
- * Serializes a structured-metadata map to JSON for storage in the {@code metadata_json} column.
- * The MySQL backend uses JSON rather than per-type columns so that adding fields (or contributing
- * a new resource type via the module SPI per Decision 13) does not require runtime DDL.
+ * Serializes structured metadata to/from JSON for storage as one opaque blob per document — the
+ * encoding every backend tier uses to carry per-type structured fields without per-type SQL DDL or
+ * Lucene schema work. The MySQL backend stores the output in a {@code MEDIUMTEXT} column; the
+ * Lucene backend stores it in a {@code StoredField}; the Elasticsearch backend will inline it
+ * inside the document. ISO-8601 instants over numeric epochs so a casual operator reading the row
+ * sees a recognisable timestamp.
  */
-final class MysqlMetadataCodec {
+public final class MetadataCodec {
 
 	private static final ObjectMapper MAPPER = new ObjectMapper()
 	        .registerModule(new JavaTimeModule())
@@ -34,10 +37,10 @@ final class MysqlMetadataCodec {
 
 	private static final String EMPTY_OBJECT = "{}";
 
-	private MysqlMetadataCodec() {
+	private MetadataCodec() {
 	}
 
-	static String encode(Map<String, Object> metadata) {
+	public static String encode(Map<String, Object> metadata) {
 		if (metadata == null || metadata.isEmpty()) {
 			return EMPTY_OBJECT;
 		}
@@ -49,7 +52,7 @@ final class MysqlMetadataCodec {
 		}
 	}
 
-	static Map<String, Object> decode(String json) {
+	public static Map<String, Object> decode(String json) {
 		if (json == null || json.isEmpty() || EMPTY_OBJECT.equals(json)) {
 			return Collections.emptyMap();
 		}

@@ -45,6 +45,7 @@
 
         <openMRSVersion>2.8.0</openMRSVersion>
         <elasticsearchVersion>8.13.4</elasticsearchVersion>
+        <luceneVersion>9.11.1</luceneVersion>
         <onnxruntimeVersion>1.24.3</onnxruntimeVersion>
 
         <junitVersion>4.13.2</junitVersion>
@@ -93,6 +94,22 @@
                 <groupId>co.elastic.clients</groupId>
                 <artifactId>elasticsearch-java</artifactId>
                 <version>${elasticsearchVersion}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.lucene</groupId>
+                <artifactId>lucene-core</artifactId>
+                <version>${luceneVersion}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.lucene</groupId>
+                <artifactId>lucene-analysis-common</artifactId>
+                <version>${luceneVersion}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.lucene</groupId>
+                <artifactId>lucene-queryparser</artifactId>
+                <version>${luceneVersion}</version>
             </dependency>
 
             <dependency>

@@ -20,7 +20,6 @@ import java.sql.Types;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,9 +43,11 @@ import org.openmrs.module.querystore.backend.DocFailure;
 import org.openmrs.module.querystore.backend.Filter;
 import org.openmrs.module.querystore.backend.HealthStatus;
 import org.openmrs.module.querystore.backend.Hit;
+import org.openmrs.module.querystore.backend.MetadataCodec;
 import org.openmrs.module.querystore.backend.SchemaSpec;
 import org.openmrs.module.querystore.backend.SearchRequest;
 import org.openmrs.module.querystore.backend.SearchResult;
+import org.openmrs.module.querystore.backend.TopKHits;
 import org.openmrs.module.querystore.backend.UnsupportedBackendOperationException;
 import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.model.QueryDocument;
@@ -87,8 +88,6 @@ public class MysqlBackendStore implements BackendStore {
 	// caching avoids re-running the FRESHNESS_GUARD loop and StringBuilder allocations on the hot
 	// write path (steady-state events + bootstrap fan-out at 100s/sec).
 	private final Map<String, String> upsertSqlCache = new ConcurrentHashMap<>();
-
-	private static final Comparator<Hit> SCORE_DESC = (a, b) -> Double.compare(b.getRawScore(), a.getRawScore());
 
 	private final DataSource dataSource;
 
@@ -215,13 +214,13 @@ public class MysqlBackendStore implements BackendStore {
 		if (StringUtils.isBlank(req.getQueryText()) || req.getLimit() <= 0) {
 			return SearchResult.empty();
 		}
-		PriorityQueue<Hit> heap = topKHeap(req.getLimit());
+		PriorityQueue<Hit> heap = TopKHits.heap(req.getLimit());
 		for (String table : resolveTables(req)) {
 			for (Hit h : bm25SingleTable(table, req)) {
-				offerToHeap(heap, h, req.getLimit());
+				TopKHits.offer(heap, h, req.getLimit());
 			}
 		}
-		return materialiseRankedFromHeap(heap, req.getLimit());
+		return TopKHits.materialise(heap, req.getLimit());
 	}
 
 	@Override
@@ -229,11 +228,11 @@ public class MysqlBackendStore implements BackendStore {
 		if (req.getQueryVector() == null || req.getLimit() <= 0) {
 			return SearchResult.empty();
 		}
-		PriorityQueue<Hit> heap = topKHeap(req.getLimit());
+		PriorityQueue<Hit> heap = TopKHits.heap(req.getLimit());
 		for (String table : resolveTables(req)) {
 			knnSingleTable(table, req, heap);
 		}
-		return materialiseRankedFromHeap(heap, req.getLimit());
+		return TopKHits.materialise(heap, req.getLimit());
 	}
 
 	@Override
@@ -352,7 +351,7 @@ public class MysqlBackendStore implements BackendStore {
 					}
 					QueryDocument doc = readDocument(table, rs, false);
 					doc.setEmbedding(MysqlVectorCodec.decode(storedBytes));
-					offerToHeap(heap, new Hit(doc, score, 0), req.getLimit());
+					TopKHits.offer(heap, new Hit(doc, score, 0), req.getLimit());
 				}
 			}
 		}
@@ -378,29 +377,6 @@ public class MysqlBackendStore implements BackendStore {
 		return tables;
 	}
 
-	private static PriorityQueue<Hit> topKHeap(int limit) {
-		return new PriorityQueue<>(limit + 1, (a, b) -> Double.compare(a.getRawScore(), b.getRawScore()));
-	}
-
-	private static void offerToHeap(PriorityQueue<Hit> heap, Hit hit, int limit) {
-		heap.offer(hit);
-		if (heap.size() > limit) {
-			heap.poll();
-		}
-	}
-
-	private static SearchResult materialiseRankedFromHeap(PriorityQueue<Hit> heap, int limit) {
-		List<Hit> ordered = new ArrayList<>(heap);
-		ordered.sort(SCORE_DESC);
-		int n = Math.min(ordered.size(), limit);
-		List<Hit> ranked = new ArrayList<>(n);
-		for (int i = 0; i < n; i++) {
-			Hit h = ordered.get(i);
-			ranked.add(new Hit(h.getDocument(), h.getRawScore(), i + 1));
-		}
-		return new SearchResult(ranked);
-	}
-
 	private QueryDocument readDocument(String table, ResultSet rs, boolean includeEmbedding) throws SQLException {
 		QueryDocument doc = new QueryDocument();
 		doc.setResourceType(stripPrefix(table));
@@ -418,7 +394,7 @@ public class MysqlBackendStore implements BackendStore {
 		if (ts != null) {
 			doc.setLastModified(ts.toInstant());
 		}
-		Map<String, Object> meta = MysqlMetadataCodec.decode(rs.getString("metadata_json"));
+		Map<String, Object> meta = MetadataCodec.decode(rs.getString("metadata_json"));
 		for (Map.Entry<String, Object> entry : meta.entrySet()) {
 			doc.putMetadata(entry.getKey(), entry.getValue());
 		}
@@ -468,7 +444,7 @@ public class MysqlBackendStore implements BackendStore {
 		}
 		ps.setString(4, doc.getText());
 		ps.setBytes(5, MysqlVectorCodec.encode(doc.getEmbedding()));
-		ps.setString(6, MysqlMetadataCodec.encode(doc.getMetadata()));
+		ps.setString(6, MetadataCodec.encode(doc.getMetadata()));
 		if (doc.getLastModified() != null) {
 			ps.setTimestamp(7, Timestamp.from(doc.getLastModified()), Calendar.getInstance(UTC));
 		} else {

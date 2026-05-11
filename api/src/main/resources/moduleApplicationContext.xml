@@ -11,10 +11,28 @@
            http://www.springframework.org/schema/tx
            http://www.springframework.org/schema/tx/spring-tx-4.3.xsd">
 
-    <bean id="querystore.backend"
+    <bean id="querystore.backend.mysql"
           class="org.openmrs.module.querystore.backend.mysql.MysqlBackendStore">
         <constructor-arg ref="dataSource"/>
     </bean>
+
+    <bean id="querystore.backend.lucene"
+          class="org.openmrs.module.querystore.backend.lucene.LuceneBackendStore"
+          destroy-method="close"/>
+
+    <bean id="querystore.backend.selector"
+          class="org.openmrs.module.querystore.backend.BackendStoreSelector">
+        <constructor-arg>
+            <map>
+                <entry key="mysql" value-ref="querystore.backend.mysql"/>
+                <entry key="lucene" value-ref="querystore.backend.lucene"/>
+            </map>
+        </constructor-arg>
+    </bean>
+
+    <bean id="querystore.backend"
+          factory-bean="querystore.backend.selector"
+          factory-method="getStore"/>
 
     <bean id="querystore.embedding.onnx"
           class="org.openmrs.module.querystore.embedding.OnnxEmbeddingProvider"/>
