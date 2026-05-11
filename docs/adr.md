@@ -1065,6 +1065,19 @@ CDC and polling are excluded for the steady-state sync path. Polling is acceptab
 - Lost events on broker restart are possible. Reliability, monitoring, and reconciliation are not solved by this decision and are tracked as separate open questions.
 - The initial bootstrap / backfill mechanism is not specified here. The steady-state mechanism only handles changes from the moment the projection is running; getting from "empty index" to "in sync" is a separate concern, also tracked below.
 
+### Migration bridge (time-bound)
+
+The OpenMRS Event module work that this decision depends on is not yet shipped. During the gap, querystore needs a working write path so that consumers — chartsearchai in particular — can migrate to the read store on a realistic timeline rather than waiting on upstream. The bridge:
+
+- **AOP runs broadly during the bridge window**, not only as a scoped gap filler. For each indexed core resource type (obs, condition, diagnosis, drug_order, test_order, referral_order, allergy, patient_program, medication_dispense, patient, encounter, visit), a per-type aspect on the corresponding core service's save / void / purge methods drives the same `serialize → embed → index` pipeline that event handlers will drive later.
+- **Per-type aspect classes, not a mega-aspect.** One class per resource type so aspects can be retired type-by-type as the corresponding event subscriber lands, instead of an all-or-nothing flip.
+- **After-commit, async.** Aspects register a `TransactionSynchronization.afterCommit` callback that hands the entity to a small executor. Indexing never blocks the clinical request thread and never runs against uncommitted state. Failures are logged and swallowed (parity with chartsearchai's current best-effort posture).
+- **Each aspect carries an explicit removal marker** — class-level Javadoc naming the events-team ticket whose merge triggers deletion, and a tracking issue filed at aspect-merge time.
+- **Cascade-delete gap is accepted for the window.** AOP on a patient's save / purge does not see cascaded obs / order / encounter deletes that core's DAOs perform; reconciliation (see [Sync reliability and reconciliation](#sync-reliability-and-reconciliation)) eventually catches orphan documents. Not solved here.
+- **The events-first model remains the long-term target.** Once an event subscriber for a type ships and is verified against AOP behavior (parity test: the same save produces the same document via both paths), the corresponding aspect is deleted. Double-firing during the verification overlap is harmless because `index()` is upsert-idempotent. After events ship for all bridge-covered types, the "scoped gap-filler only" rule in the main Decision reasserts in full.
+
+The bridge is a deliberate, time-bound widening of AOP's scope, not a supersession. Aspects added under the bridge that outlive their corresponding event subscriber are tech debt by definition and must be tracked accordingly.
+
 ---
 
 ## Decision 13: Module Extension SPI (Service Provider Interface) for Custom Resource Types
