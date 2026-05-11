@@ -9,25 +9,14 @@
  */
 package org.openmrs.module.querystore.serialization;
 
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_ACTION;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_AUTO_EXPIRE_DATE;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_CARE_SETTING;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_CLINICAL_HISTORY;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_DATE_STOPPED;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_INSTRUCTIONS;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_LATERALITY;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_ORDER_NUMBER;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_PREVIOUS_ORDER_UUID;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_PROVIDER_NAME;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_PROVIDER_UUID;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_SPECIMEN_SOURCE_NAME;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_SPECIMEN_SOURCE_UUID;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_URGENCY;
 
-import java.time.LocalDate;
 import java.util.Date;
 
-import org.openmrs.CareSetting;
 import org.openmrs.Concept;
 import org.openmrs.Order;
 import org.openmrs.ServiceOrder;
@@ -42,31 +31,18 @@ import org.openmrs.module.querystore.util.DateFormatUtil;
  * overrides-encounter-provider convention are 100% identical between them — only the document's
  * {@code resource_type}, supported entity class, and the text-prefix differ. Concrete subclasses
  * supply those three discriminators through abstract hooks; the populate template here owns the
- * single-walk-per-record contract.
+ * single-walk-per-record contract. Order-base fields (action, urgency, care setting, etc.) and
+ * the Order identity overrides + orderer-overrides-encounter-provider are inherited from
+ * {@link AbstractOrderRecordSerializer}.
  */
 public abstract class AbstractServiceOrderRecordSerializer<T extends ServiceOrder>
-        extends AbstractRecordSerializer<T> {
+        extends AbstractOrderRecordSerializer<T> {
 
 	/**
 	 * Leading clause for the embedded {@code text}, e.g. {@code "Test order: "}. Must end with a
 	 * trailing space — concatenated directly to the display name with no separator.
 	 */
 	protected abstract String getTextPrefix();
-
-	@Override
-	protected String getPatientUuid(T order) {
-		return order.getPatient() != null ? order.getPatient().getUuid() : null;
-	}
-
-	@Override
-	protected String getResourceUuid(T order) {
-		return order.getUuid();
-	}
-
-	@Override
-	protected LocalDate getDate(T order) {
-		return DateFormatUtil.toLocalDate(order.getDateActivated());
-	}
 
 	@Override
 	protected void populate(T order, QueryDocument doc) {
@@ -104,34 +80,9 @@ public abstract class AbstractServiceOrderRecordSerializer<T extends ServiceOrde
 		if (instructions != null) {
 			doc.putMetadata(FIELD_INSTRUCTIONS, instructions);
 		}
-		if (action != null) {
-			doc.putMetadata(FIELD_ACTION, action.name());
-		}
-		if (urgency != null) {
-			doc.putMetadata(FIELD_URGENCY, urgency.name());
-		}
-		CareSetting careSetting = order.getCareSetting();
-		if (careSetting != null && careSetting.getName() != null) {
-			doc.putMetadata(FIELD_CARE_SETTING, careSetting.getName());
-		}
-		Order previous = order.getPreviousOrder();
-		if (previous != null) {
-			doc.putMetadata(FIELD_PREVIOUS_ORDER_UUID, previous.getUuid());
-		}
-		if (order.getOrderNumber() != null) {
-			doc.putMetadata(FIELD_ORDER_NUMBER, order.getOrderNumber());
-		}
-		if (dateStoppedText != null) {
-			doc.putMetadata(FIELD_DATE_STOPPED, dateStoppedText);
-		}
-		if (autoExpireText != null) {
-			doc.putMetadata(FIELD_AUTO_EXPIRE_DATE, autoExpireText);
-		}
 
-		putEncounterContext(doc, order.getEncounter());
-		// Order-family convention: orderer overrides encounter-derived provider when present
-		// (ADR Decision 6, Serializer conventions).
-		putUuidAndName(doc, FIELD_PROVIDER_UUID, FIELD_PROVIDER_NAME, order.getOrderer());
+		putOrderBaseFields(doc, order, dateStoppedText, autoExpireText);
+		putOrderEncounterAndProvider(doc, order);
 	}
 
 	private String buildText(String preferredName, ServiceOrder.Laterality laterality,

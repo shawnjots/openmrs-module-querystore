@@ -15,13 +15,12 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.openmrs.module.querystore.serialization.ConceptFixtures.concept;
 import static org.openmrs.module.querystore.serialization.DateFixtures.utcDate;
+import static org.openmrs.module.querystore.serialization.EncounterFixtures.encounterWithProvider;
+import static org.openmrs.module.querystore.serialization.OrderTestFixtures.setOrderField;
 import static org.openmrs.module.querystore.serialization.ProviderFixtures.providerNamed;
 
-import java.lang.reflect.Field;
 import java.util.Calendar;
 import java.util.Date;
-import java.util.HashSet;
-import java.util.Set;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -30,12 +29,9 @@ import org.openmrs.Concept;
 import org.openmrs.Drug;
 import org.openmrs.DrugOrder;
 import org.openmrs.Encounter;
-import org.openmrs.EncounterProvider;
 import org.openmrs.EncounterType;
 import org.openmrs.Order;
 import org.openmrs.OrderFrequency;
-// Reflection is used to set Order.orderNumber and Order.dateStopped, which core only assigns
-// through OrderService when an order is saved or discontinued — no public setters exist.
 import org.openmrs.Patient;
 import org.openmrs.Provider;
 import org.openmrs.module.querystore.model.QueryDocument;
@@ -242,14 +238,7 @@ public class DrugOrderRecordSerializerTest {
 	@Test
 	public void serialize_orderer_overridesEncounterProvider() {
 		Provider encounterProvider = providerNamed("encounter-provider-uuid", "Nurse", "Akinyi");
-		Encounter enc = new Encounter();
-		enc.setUuid("enc-uuid");
-		EncounterProvider ep = new EncounterProvider();
-		ep.setProvider(encounterProvider);
-		Set<EncounterProvider> providers = new HashSet<>();
-		providers.add(ep);
-		enc.setEncounterProviders(providers);
-
+		Encounter enc = encounterWithProvider("enc-uuid", encounterProvider);
 		Provider orderer = providerNamed("orderer-uuid", "Dr.", "Ochieng");
 
 		DrugOrder order = order(concept("Metformin"), null);
@@ -326,14 +315,4 @@ public class DrugOrderRecordSerializerTest {
 		return f;
 	}
 
-	private static void setOrderField(Order order, String fieldName, Object value) {
-		try {
-			Field f = Order.class.getDeclaredField(fieldName);
-			f.setAccessible(true);
-			f.set(order, value);
-		}
-		catch (ReflectiveOperationException e) {
-			throw new AssertionError("Failed to set Order." + fieldName, e);
-		}
-	}
 }

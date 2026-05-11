@@ -9,12 +9,8 @@
  */
 package org.openmrs.module.querystore.serialization;
 
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_ACTION;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_AS_NEEDED;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_AS_NEEDED_CONDITION;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_AUTO_EXPIRE_DATE;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_CARE_SETTING;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_DATE_STOPPED;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_DOSE;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_DOSE_UNITS;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_DOSE_UNITS_UUID;
@@ -27,24 +23,15 @@ import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_DURATION_U
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_FREQUENCY;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_FREQUENCY_UUID;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_NUM_REFILLS;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_ORDER_NUMBER;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_PREVIOUS_ORDER_UUID;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_PROVIDER_NAME;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_PROVIDER_UUID;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_QUANTITY;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_QUANTITY_UNITS;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_QUANTITY_UNITS_UUID;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_ROUTE;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_ROUTE_UUID;
-import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_URGENCY;
 
-import java.time.LocalDate;
-
-import org.openmrs.CareSetting;
 import org.openmrs.Concept;
 import org.openmrs.Drug;
 import org.openmrs.DrugOrder;
-import org.openmrs.Order;
 import org.openmrs.OrderFrequency;
 import org.openmrs.module.querystore.model.QueryDocument;
 import org.openmrs.module.querystore.util.ConceptNameUtil;
@@ -52,15 +39,15 @@ import org.openmrs.module.querystore.util.DateFormatUtil;
 
 /**
  * Serializes a {@link DrugOrder} into a {@link QueryDocument} for the {@code openmrs_drug_order}
- * index. The display name is taken from the {@link Drug} formulation when present (e.g.,
- * "Metformin 500mg"), otherwise from the order's coded concept's preferred name. Coded units
- * (dose units, route, frequency, duration units, quantity units) are stored as both UUID and
- * human-readable name per ADR Decision 9. Provider context comes from the order's
- * {@link Order#getOrderer() orderer} rather than the encounter's first active provider —
- * the orderer is the authoritative prescriber for an order. If the order has no orderer, the
- * encounter's first active provider is retained as a fallback.
+ * index. Order-base fields (action, urgency, care setting, previous order, order number, date
+ * stopped, auto-expire date) and the Order-identity overrides plus the orderer-overrides-encounter-
+ * provider convention live in {@link AbstractOrderRecordSerializer}; this class handles the
+ * drug-specific surface — the {@link Drug} formulation (preferred over the order's concept
+ * preferred name for display when present), dose + dose units, route, frequency, duration +
+ * duration units, quantity + quantity units (all coded units stored as UUID+name per ADR Decision
+ * 9), PRN flag and condition, dosing instructions, and number of refills.
  */
-public class DrugOrderRecordSerializer extends AbstractRecordSerializer<DrugOrder> {
+public class DrugOrderRecordSerializer extends AbstractOrderRecordSerializer<DrugOrder> {
 
 	@Override
 	public String getResourceType() {
@@ -70,21 +57,6 @@ public class DrugOrderRecordSerializer extends AbstractRecordSerializer<DrugOrde
 	@Override
 	public Class<DrugOrder> getSupportedType() {
 		return DrugOrder.class;
-	}
-
-	@Override
-	protected String getPatientUuid(DrugOrder order) {
-		return order.getPatient() != null ? order.getPatient().getUuid() : null;
-	}
-
-	@Override
-	protected String getResourceUuid(DrugOrder order) {
-		return order.getUuid();
-	}
-
-	@Override
-	protected LocalDate getDate(DrugOrder order) {
-		return DateFormatUtil.toLocalDate(order.getDateActivated());
 	}
 
 	@Override
@@ -113,9 +85,12 @@ public class DrugOrderRecordSerializer extends AbstractRecordSerializer<DrugOrde
 		        ? DateFormatUtil.formatDate(order.getDateStopped()) : null;
 		String autoExpireText = order.getAutoExpireDate() != null
 		        ? DateFormatUtil.formatDate(order.getAutoExpireDate()) : null;
+		String dosingInstructions = trimToNull(order.getDosingInstructions());
+		String asNeededCondition = trimToNull(order.getAsNeededCondition());
 
 		doc.setText(buildText(displayName, order, doseUnitsName, routeName, frequencyName,
-		        durationUnitsName, quantityUnitsName, dateStoppedText));
+		        durationUnitsName, quantityUnitsName, dateStoppedText, dosingInstructions,
+		        asNeededCondition));
 
 		putConceptFields(doc, concept, preferredName);
 		if (drug != null) {
@@ -147,18 +122,28 @@ public class DrugOrderRecordSerializer extends AbstractRecordSerializer<DrugOrde
 		putConceptUuidAndName(doc, FIELD_QUANTITY_UNITS_UUID, FIELD_QUANTITY_UNITS,
 		        order.getQuantityUnits(), quantityUnitsName);
 
-		putOrderMetaFields(doc, order, dateStoppedText, autoExpireText);
+		if (dosingInstructions != null) {
+			doc.putMetadata(FIELD_DOSING_INSTRUCTIONS, dosingInstructions);
+		}
+		if (order.getAsNeeded() != null) {
+			doc.putMetadata(FIELD_AS_NEEDED, order.getAsNeeded());
+		}
+		if (asNeededCondition != null) {
+			doc.putMetadata(FIELD_AS_NEEDED_CONDITION, asNeededCondition);
+		}
+		if (order.getNumRefills() != null) {
+			doc.putMetadata(FIELD_NUM_REFILLS, order.getNumRefills());
+		}
 
-		putEncounterContext(doc, order.getEncounter());
-		// Order-family convention: orderer overrides encounter-derived provider when present
-		// (ADR Decision 6, Serializer conventions).
-		putUuidAndName(doc, FIELD_PROVIDER_UUID, FIELD_PROVIDER_NAME, order.getOrderer());
+		putOrderBaseFields(doc, order, dateStoppedText, autoExpireText);
+		putOrderEncounterAndProvider(doc, order);
 	}
 
 	private static String buildText(String displayName, DrugOrder order, String doseUnitsName,
 	                                String routeName, String frequencyName,
 	                                String durationUnitsName, String quantityUnitsName,
-	                                String dateStoppedText) {
+	                                String dateStoppedText, String dosingInstructions,
+	                                String asNeededCondition) {
 		StringBuilder sb = new StringBuilder("Drug order: ").append(displayName);
 
 		// Only emit ". Dose: ..." when an actual dose number is present. Without a dose, the
@@ -196,14 +181,12 @@ public class DrugOrderRecordSerializer extends AbstractRecordSerializer<DrugOrde
 		}
 		if (Boolean.TRUE.equals(order.getAsNeeded())) {
 			sb.append(". PRN");
-			String condition = trimToNull(order.getAsNeededCondition());
-			if (condition != null) {
-				sb.append(" for ").append(condition);
+			if (asNeededCondition != null) {
+				sb.append(" for ").append(asNeededCondition);
 			}
 		}
-		String instructions = trimToNull(order.getDosingInstructions());
-		if (instructions != null) {
-			sb.append(". ").append(instructions);
+		if (dosingInstructions != null) {
+			sb.append(". ").append(dosingInstructions);
 		}
 		return sb.toString();
 	}
@@ -231,46 +214,4 @@ public class DrugOrderRecordSerializer extends AbstractRecordSerializer<DrugOrde
 		}
 		return sb.toString();
 	}
-
-	private static void putOrderMetaFields(QueryDocument doc, DrugOrder order,
-	                                       String dateStoppedText, String autoExpireText) {
-		if (order.getAction() != null) {
-			doc.putMetadata(FIELD_ACTION, order.getAction().name());
-		}
-		if (order.getUrgency() != null) {
-			doc.putMetadata(FIELD_URGENCY, order.getUrgency().name());
-		}
-		String instructions = trimToNull(order.getDosingInstructions());
-		if (instructions != null) {
-			doc.putMetadata(FIELD_DOSING_INSTRUCTIONS, instructions);
-		}
-		if (order.getAsNeeded() != null) {
-			doc.putMetadata(FIELD_AS_NEEDED, order.getAsNeeded());
-		}
-		String asNeededCondition = trimToNull(order.getAsNeededCondition());
-		if (asNeededCondition != null) {
-			doc.putMetadata(FIELD_AS_NEEDED_CONDITION, asNeededCondition);
-		}
-		if (order.getNumRefills() != null) {
-			doc.putMetadata(FIELD_NUM_REFILLS, order.getNumRefills());
-		}
-		CareSetting careSetting = order.getCareSetting();
-		if (careSetting != null && careSetting.getName() != null) {
-			doc.putMetadata(FIELD_CARE_SETTING, careSetting.getName());
-		}
-		Order previous = order.getPreviousOrder();
-		if (previous != null) {
-			doc.putMetadata(FIELD_PREVIOUS_ORDER_UUID, previous.getUuid());
-		}
-		if (order.getOrderNumber() != null) {
-			doc.putMetadata(FIELD_ORDER_NUMBER, order.getOrderNumber());
-		}
-		if (dateStoppedText != null) {
-			doc.putMetadata(FIELD_DATE_STOPPED, dateStoppedText);
-		}
-		if (autoExpireText != null) {
-			doc.putMetadata(FIELD_AUTO_EXPIRE_DATE, autoExpireText);
-		}
-	}
-
 }

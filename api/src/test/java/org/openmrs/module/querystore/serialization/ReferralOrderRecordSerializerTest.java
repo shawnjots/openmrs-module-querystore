@@ -13,9 +13,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.openmrs.module.querystore.serialization.ConceptFixtures.concept;
 import static org.openmrs.module.querystore.serialization.DateFixtures.utcDate;
+import static org.openmrs.module.querystore.serialization.OrderTestFixtures.setOrderField;
 import static org.openmrs.module.querystore.serialization.ProviderFixtures.providerNamed;
 
-import java.lang.reflect.Field;
 import java.util.Calendar;
 import java.util.Date;
 
@@ -150,14 +150,4 @@ public class ReferralOrderRecordSerializerTest {
 		return order;
 	}
 
-	private static void setOrderField(Order order, String fieldName, Object value) {
-		try {
-			Field f = Order.class.getDeclaredField(fieldName);
-			f.setAccessible(true);
-			f.set(order, value);
-		}
-		catch (ReflectiveOperationException e) {
-			throw new AssertionError("Failed to set Order." + fieldName, e);
-		}
-	}
 }

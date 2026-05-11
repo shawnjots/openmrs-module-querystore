@@ -15,12 +15,11 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.openmrs.module.querystore.serialization.ConceptFixtures.concept;
 import static org.openmrs.module.querystore.serialization.DateFixtures.utcDate;
+import static org.openmrs.module.querystore.serialization.EncounterFixtures.encounterWithProvider;
 import static org.openmrs.module.querystore.serialization.ProviderFixtures.providerNamed;
 
 import java.util.Calendar;
 import java.util.Date;
-import java.util.HashSet;
-import java.util.Set;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -28,7 +27,6 @@ import org.openmrs.Concept;
 import org.openmrs.Drug;
 import org.openmrs.DrugOrder;
 import org.openmrs.Encounter;
-import org.openmrs.EncounterProvider;
 import org.openmrs.EncounterType;
 import org.openmrs.Location;
 import org.openmrs.MedicationDispense;
@@ -190,14 +188,7 @@ public class MedicationDispenseRecordSerializerTest {
 	@Test
 	public void serialize_dispenser_isParallelToEncounterProvider() {
 		Provider encounterProvider = providerNamed("encounter-provider-uuid", "Dr.", "Ochieng");
-		Encounter enc = new Encounter();
-		enc.setUuid("enc-uuid");
-		EncounterProvider ep = new EncounterProvider();
-		ep.setProvider(encounterProvider);
-		Set<EncounterProvider> providers = new HashSet<>();
-		providers.add(ep);
-		enc.setEncounterProviders(providers);
-
+		Encounter enc = encounterWithProvider("enc-uuid", encounterProvider);
 		Provider dispenser = providerNamed("dispenser-uuid", "Pharm.", "Wanjiku");
 
 		MedicationDispense dispense = dispense(concept("Metformin"), null);

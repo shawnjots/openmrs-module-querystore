@@ -15,20 +15,18 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.openmrs.module.querystore.serialization.ConceptFixtures.concept;
 import static org.openmrs.module.querystore.serialization.DateFixtures.utcDate;
+import static org.openmrs.module.querystore.serialization.EncounterFixtures.encounterWithProvider;
+import static org.openmrs.module.querystore.serialization.OrderTestFixtures.setOrderField;
 import static org.openmrs.module.querystore.serialization.ProviderFixtures.providerNamed;
 
-import java.lang.reflect.Field;
 import java.util.Calendar;
 import java.util.Date;
-import java.util.HashSet;
-import java.util.Set;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.openmrs.CareSetting;
 import org.openmrs.Concept;
 import org.openmrs.Encounter;
-import org.openmrs.EncounterProvider;
 import org.openmrs.EncounterType;
 import org.openmrs.Order;
 import org.openmrs.Patient;
@@ -196,14 +194,7 @@ public class TestOrderRecordSerializerTest {
 	@Test
 	public void serialize_orderer_overridesEncounterProvider() {
 		Provider encounterProvider = providerNamed("encounter-provider-uuid", "Nurse", "Akinyi");
-		Encounter enc = new Encounter();
-		enc.setUuid("enc-uuid");
-		EncounterProvider ep = new EncounterProvider();
-		ep.setProvider(encounterProvider);
-		Set<EncounterProvider> providers = new HashSet<>();
-		providers.add(ep);
-		enc.setEncounterProviders(providers);
-
+		Encounter enc = encounterWithProvider("enc-uuid", encounterProvider);
 		Provider orderer = providerNamed("orderer-uuid", "Dr.", "Ochieng");
 
 		TestOrder order = order(concept("X-Ray Chest"));
@@ -219,13 +210,7 @@ public class TestOrderRecordSerializerTest {
 	@Test
 	public void serialize_nullOrderer_preservesEncounterProvider() {
 		Provider encounterProvider = providerNamed("encounter-provider-uuid", "Dr.", "Ochieng");
-		Encounter enc = new Encounter();
-		enc.setUuid("enc-uuid");
-		EncounterProvider ep = new EncounterProvider();
-		ep.setProvider(encounterProvider);
-		Set<EncounterProvider> providers = new HashSet<>();
-		providers.add(ep);
-		enc.setEncounterProviders(providers);
+		Encounter enc = encounterWithProvider("enc-uuid", encounterProvider);
 
 		TestOrder order = order(concept("X-Ray Chest"));
 		order.setEncounter(enc);
@@ -283,14 +268,4 @@ public class TestOrderRecordSerializerTest {
 		return order;
 	}
 
-	private static void setOrderField(Order order, String fieldName, Object value) {
-		try {
-			Field f = Order.class.getDeclaredField(fieldName);
-			f.setAccessible(true);
-			f.set(order, value);
-		}
-		catch (ReflectiveOperationException e) {
-			throw new AssertionError("Failed to set Order." + fieldName, e);
-		}
-	}
 }
