@@ -25,6 +25,10 @@
         <point>org.openmrs.api.ObsService</point>
         <class>org.openmrs.module.querystore.bridge.ObsIndexingAdvice</class>
     </advice>
+    <advice>
+        <point>org.openmrs.api.EncounterService</point>
+        <class>org.openmrs.module.querystore.bridge.EncounterIndexingAdvice</class>
+    </advice>
 
     <updateURL>https://modules.openmrs.org/modules/download/${project.parent.artifactId}/update.rdf</updateURL>
 
