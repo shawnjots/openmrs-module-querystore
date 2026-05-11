@@ -170,9 +170,10 @@ public abstract class AbstractRecordSerializer<T> implements ClinicalRecordSeria
 	 * Standard {@code dateChanged ?? dateCreated} formula for the version timestamp on a record
 	 * sourced from a {@link BaseOpenmrsData} entity. Returns {@code null} when both audit dates are
 	 * unset (a transient or test-constructed entity), which leaves the document without version
-	 * protection on the backend write path.
+	 * protection on the backend write path. Public so the bootstrap path's per-type cursor
+	 * resolution can share this single source of truth instead of restating the formula.
 	 */
-	protected static Instant lastModifiedOf(BaseOpenmrsData record) {
+	public static Instant lastModifiedOf(BaseOpenmrsData record) {
 		if (record == null) {
 			return null;
 		}

@@ -6,9 +6,29 @@
                             http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.7.xsd">
 
     <!--
-        No schema changes are required in the OpenMRS transactional database. The query store
-        lives in an external backend (Elasticsearch by default). Add changesets here only if the
-        module later needs to persist bookkeeping state (e.g., last-synchronized sequence numbers).
+        Document storage lives in the backend selected by querystore.backend (Decision 3). The
+        only table this changelog creates is the bookkeeping state for the bootstrap path: the
+        per-type cursor and counters used to checkpoint and resume backfill scans.
     -->
+
+    <changeSet id="querystore-bootstrap-progress-1" author="dkayiwa">
+        <comment>Per-type bootstrap cursor and counters for the backfill path.</comment>
+        <createTable tableName="querystore_bootstrap_progress">
+            <column name="resource_type" type="VARCHAR(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="status" type="VARCHAR(16)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="cursor_date_changed" type="DATETIME(3)"/>
+            <column name="cursor_uuid" type="CHAR(38)"/>
+            <column name="documents_indexed" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="started_at" type="DATETIME(3)"/>
+            <column name="completed_at" type="DATETIME(3)"/>
+            <column name="failure_message" type="TEXT"/>
+        </createTable>
+    </changeSet>
 
 </databaseChangeLog>

@@ -34,11 +34,36 @@
         <property name="embeddingProvider" ref="querystore.embedding.dispatcher"/>
     </bean>
 
+    <bean id="querystore.bootstrap.progressDao"
+          class="org.openmrs.module.querystore.bootstrap.BootstrapProgressDao">
+        <constructor-arg ref="dataSource"/>
+    </bean>
+
+    <bean id="querystore.bootstrap.obs"
+          class="org.openmrs.module.querystore.bootstrap.ObsBootstrapper">
+        <constructor-arg ref="querystore.serializer.obs"/>
+        <constructor-arg ref="dbSessionFactory"/>
+    </bean>
+
+    <bean id="bootstrapService"
+          class="org.openmrs.module.querystore.bootstrap.BootstrapServiceImpl">
+        <property name="progressDao" ref="querystore.bootstrap.progressDao"/>
+        <property name="queryStoreService" ref="queryStoreService"/>
+        <property name="embeddingProvider" ref="querystore.embedding.dispatcher"/>
+        <property name="bootstrappers">
+            <list>
+                <ref bean="querystore.bootstrap.obs"/>
+            </list>
+        </property>
+    </bean>
+
     <bean parent="serviceContext">
         <property name="moduleService">
             <list>
                 <value>org.openmrs.module.querystore.api.QueryStoreService</value>
                 <ref bean="queryStoreService"/>
+                <value>org.openmrs.module.querystore.bootstrap.BootstrapService</value>
+                <ref bean="bootstrapService"/>
             </list>
         </property>
     </bean>
