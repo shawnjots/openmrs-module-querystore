@@ -1126,8 +1126,29 @@ Querystore retains ownership of the shared infrastructure:
 3. **Preserves existing decisions uniformly.** Embedding model, locale, voiding, retirement, self-sufficiency — all apply to module-contributed types via the SPI. No parallel rules; the SPI is the surface that enforces existing rules on extension data.
 4. **Wildcard cross-type retrieval is already cheap.** Per-type indices made cross-type retrieval inexpensive from the start ([Decision 4](#decision-4-per-type-indices-over-a-single-index)). Modules contributing new indices automatically join the cross-type query surface with no consumer code change.
 
+### Implementation notes
+
+The SPI is the single interface `org.openmrs.module.querystore.spi.ResourceTypeProvider`. A providing module declares a Spring bean implementing this interface in its own `moduleApplicationContext.xml`; querystore discovers all such beans via `Context.getRegisteredComponents(ResourceTypeProvider.class)` at bootstrap time, so a providing module installed after querystore is picked up without restart.
+
+```java
+public interface ResourceTypeProvider {
+    String getResourceType();                   // <moduleid>_<type>
+    ClinicalRecordSerializer<?> getSerializer();
+    TypeBootstrapper<?> getBootstrapper();      // nullable
+}
+```
+
+The interface bundles three things and only three things — the resource-type name, the serializer that builds a `QueryDocument` from a domain entity (the cross-cutting field contract above is the serializer's contract), and an optional `TypeBootstrapper` for historical backfill. A null bootstrapper is legal for types whose first record post-dates module install.
+
+**Indexing trigger lives in the providing module.** A provider does not declare its event subscriptions or AOP advice through the SPI. The module subclasses `org.openmrs.module.querystore.bridge.AbstractIndexingAdvice` and wires it as AOP advice on its own service, mirroring how core-type advice is wired in querystore. The `querystore.bridge.indexer` and `querystore.bridge.dispatcher` beans are reachable via `Context.getRegisteredComponent(...)` so providers reuse the embed-then-upsert after-commit pipeline without re-implementing it. AOP is a time-bound migration bridge per [Decision 12](#decision-12-sync-mechanism--events-first-aop-as-last-resort-gap-filler); when events-first sync ships, the SPI grows an event-subscription hook and the AOP path retires alongside the core-type advice.
+
+**Name validation isolates malformed providers.** Querystore validates each provider's resource type via `ResourceTypeNames.validateProvided` (regex enforcing `<moduleid>_<type>` segments, no consecutive underscores, no leading/trailing underscores) and rejects collisions with the unprefixed core names (`obs`, `encounter`, `visit`, `patient`, `condition`, `diagnosis`, `allergy`, `drug_order`, `test_order`, `referral_order`, `medication_dispense`, `program`). A bad name is logged and the offending provider is skipped at discovery time — one malformed bean does not abort discovery for well-formed peers, mirroring `bootstrap()`'s per-type isolation. The same envelope catches throwing accessors, duplicate names, and serializer/provider resource-type drift. Four of the twelve core names contain underscores and would otherwise match the regex, so the reserved-set check is load-bearing, not redundant.
+
+**Backends self-heal on first write.** All three reference backends call `ensureSchema` lazily on the first upsert per resource type, and the MySQL tier stores all type-specific fields in a single `metadata_json` column ([Decision 3](#decision-3-pluggable-backend-spi-with-three-reference-implementations)). A provider therefore declares no `SchemaSpec`, no Liquibase changesets, and no per-tier mapping — the structured surface is uniform across providers and core types.
+
+**Run order: core first, providers after.** `BootstrapServiceImpl` iterates core bootstrappers (in their configured order, ending in obs) and then providers (in the order Spring returns them). Deferring providers until after the long-running core obs scan is the wrong default in theory but right in practice: providers tend to be small (appointments, billing) and core obs dwarfs them, so what gets delayed by ordering is small to begin with and what gets prioritised by ordering is the slowest scan.
+
 ### Consequences
-- The SPI's exact Java interface, registration mechanism, and lifecycle hooks are implementation work. This decision establishes the principle and the contract; the signature is settled at implementation time.
 - Modules wanting to contribute clinical data depend on querystore (transitively or directly). Deployments that don't install querystore lose any module-contributed indexing — same property as [Decision 2](#decision-2-module-not-core)'s "not every deployment needs it" applied recursively.
 - A module rename (changing its moduleid) would require re-creating its index under the new name and re-syncing. Moduleid changes are rare and disruptive in OpenMRS generally, so this is an acceptable consequence of using moduleid for namespacing rather than a separate, mutable identifier.
 - The cross-cutting field contract creates a documentation obligation for every contributing module: their docs must specify which cross-cutting fields are populated and which are intentionally null.
