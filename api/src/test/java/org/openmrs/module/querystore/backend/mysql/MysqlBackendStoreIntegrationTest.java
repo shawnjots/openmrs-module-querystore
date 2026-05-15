@@ -14,6 +14,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import java.sql.Statement;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -30,6 +31,7 @@ import org.openmrs.api.db.hibernate.DbSessionFactory;
 import org.openmrs.module.querystore.backend.BackendCapabilities;
 import org.openmrs.module.querystore.backend.BulkWriteResult;
 import org.openmrs.module.querystore.backend.Filter;
+import org.openmrs.module.querystore.backend.JdbcSupport;
 import org.openmrs.module.querystore.backend.SchemaSpec;
 import org.openmrs.module.querystore.backend.SearchRequest;
 import org.openmrs.module.querystore.backend.SearchResult;
@@ -286,7 +288,54 @@ public class MysqlBackendStoreIntegrationTest {
 		assertTrue("patient-scoped query took " + elapsedMs + "ms; expected <5000ms", elapsedMs < 5000);
 	}
 
+	@Test
+	public void wildcardSearchSkipsBootstrapStateTable() {
+		// Regression for #11. querystore_bootstrap_progress matches the querystore_% metadata probe
+		// but lacks resource_uuid / patient_uuid, so a wildcard read that enumerates it and issues
+		// per-type-index SQL crashes with SQLSyntaxErrorException. listAllTables() must filter it
+		// out. A fresh MysqlBackendStore guarantees an empty knownTables cache, forcing the
+		// metadata-probe fallback path the bug surfaces in.
+		createBootstrapProgressTable();
+		try {
+			MysqlBackendStore freshBackend = new MysqlBackendStore(sessionFactory);
+			// UUID guarantees the query doesn't match any fixture in this class's shared container,
+			// so isEmpty() pins the filter's behavior rather than depending on absent-token luck.
+			SearchResult result = freshBackend.bm25(
+			    SearchRequest.builder().queryText(UUID.randomUUID().toString()).limit(10).build());
+			assertNotNull(result);
+			assertTrue("bookkeeping table must be filtered, not silently leaked into wildcard hits",
+			    result.getHits().isEmpty());
+		}
+		finally {
+			dropBootstrapProgressTable();
+		}
+	}
+
 	// ---------- helpers ----------
+
+	// Minimal subset of the real liquibase schema — the table only needs to exist for the
+	// metadata probe to enumerate it. Don't extend ad-hoc; if a test ever needs to insert rows,
+	// share BootstrapIntegrationTest.PROGRESS_DDL instead.
+	private static void createBootstrapProgressTable() {
+		JdbcSupport.inTransaction(sessionFactory, conn -> {
+			try (Statement stmt = conn.createStatement()) {
+				stmt.executeUpdate("CREATE TABLE IF NOT EXISTS querystore_bootstrap_progress ("
+				        + "  resource_type VARCHAR(64) NOT NULL,"
+				        + "  status VARCHAR(16) NOT NULL,"
+				        + "  documents_indexed BIGINT NOT NULL DEFAULT 0,"
+				        + "  PRIMARY KEY (resource_type)"
+				        + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+			}
+		});
+	}
+
+	private static void dropBootstrapProgressTable() {
+		JdbcSupport.inTransaction(sessionFactory, conn -> {
+			try (Statement stmt = conn.createStatement()) {
+				stmt.executeUpdate("DROP TABLE IF EXISTS querystore_bootstrap_progress");
+			}
+		});
+	}
 
 	private static QueryDocument doc(String resourceType, String patientUuid, String text, float[] embedding) {
 		QueryDocument d = new QueryDocument();

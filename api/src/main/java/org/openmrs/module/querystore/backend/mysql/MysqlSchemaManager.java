@@ -14,6 +14,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,6 +35,11 @@ final class MysqlSchemaManager {
 	// Resource-type names are validated on every upsert / search path; precompile so the hot path
 	// doesn't recompile the same regex per call.
 	private static final Pattern RESOURCE_TYPE_PATTERN = Pattern.compile("[a-z][a-z0-9_]*");
+
+	// Bookkeeping tables that match the `querystore_%` metadata probe but aren't per-type document
+	// indices (no resource_uuid / patient_uuid columns). Excluded from listAllTables() so wildcard
+	// reads don't issue per-type-index SQL against them. See issue #11.
+	private static final Set<String> STATE_TABLES = Collections.singleton("querystore_bootstrap_progress");
 
 	private final DbSessionFactory sessionFactory;
 
@@ -101,7 +107,10 @@ final class MysqlSchemaManager {
 				try (ResultSet rs = md.getTables(conn.getCatalog(), null, QueryStoreConstants.INDEX_PREFIX + "%",
 				    new String[] { "TABLE" })) {
 					while (rs.next()) {
-						tables.add(rs.getString("TABLE_NAME").toLowerCase());
+						String name = rs.getString("TABLE_NAME").toLowerCase();
+						if (!STATE_TABLES.contains(name)) {
+							tables.add(name);
+						}
 					}
 				}
 			});
