@@ -1,7 +1,7 @@
 ---
 name: harden
 description: Run iterative /review and /simplify passes on the current slice in two phases until both converge. Use when the user wants to harden a code slice end-to-end without manually orchestrating the review/simplify dance. Trigger phrases include "harden this", "polish until done", "iterate until convergence", "harden".
-version: 0.4.0
+version: 0.5.0
 ---
 
 # Harden
@@ -31,6 +31,17 @@ The slice is a piece of a bigger machine. Reviewing it in isolation hides the bu
 
 If any thread surfaces a concrete failure mode ("if we ship, X breaks because Y"), it is a Phase 1 finding even if the fix lives outside the file you're hardening. The slice's correctness contract spans its boundaries.
 
+### Test coverage (mandatory in every Phase 1 pass)
+
+For each behavior change the slice introduces (a new method, a changed signature, a new code path, a new contract, a new invariant), name the test that exercises it. The test must:
+
+- Fail on the pre-change code (or would have, retroactively applied).
+- Pass on the post-change code.
+
+A behavior change without a named test is a Phase 1 finding — even when the code looks "obviously correct," "matches an existing pattern," or "is trivially small." Untested behavior is undefined behavior under refactoring; the next maintainer cannot tell intent from accident, and the next refactor silently breaks the contract.
+
+**Compile-blocked exception.** If part of the slice cannot compile (placeholder dependency, missing infrastructure, generated code not yet present), enumerate *which specific code paths* are blocked and apply the rule to the rest. "The whole slice has no tests because one file doesn't compile" is a conflation failure — same shape as the broader scope-inflation anti-pattern. Call it out explicitly: list every code path that IS compilable today, write tests for those, and for the compile-blocked code sketch the test contract in writing (test name, what it would assert) so the reviewer and future-maintainer know what's owed.
+
 **Stop Phase 1 when ANY are true:**
 - The verdict is "ready to commit" / "no further review value."
 - Two consecutive passes return only cosmetic items (e.g., test assertion tightening, import ordering).
@@ -42,7 +53,9 @@ If any thread surfaces a concrete failure mode ("if we ship, X breaks because Y"
 
 > "Integration questions answered: what happens to this slice when {an upstream service mutates without notifying me / an optional dependency is absent at runtime / a consumer scans before I register / a sibling service silently changes shared state}? Answer: [concrete behaviors observed or verified, one line each]."
 
-If you cannot truthfully complete BOTH sentences, the slice is NOT ready for Phase 2 — run another Phase 1 pass. Two passes both finding substantive issues is a signal to keep going, not stop. Pass count is not the threshold; convergence is.
+> "Behavior changes without tests: [enumerated — for each, state 'test added: <name>' or 'compile-blocked, test contract sketched: <description>'] or 'none.'"
+
+If you cannot truthfully complete ALL THREE sentences, the slice is NOT ready for Phase 2 — run another Phase 1 pass. Two passes both finding substantive issues is a signal to keep going, not stop. Pass count is not the threshold; convergence is.
 
 ## Phase 2: Polish (/simplify style)
 
