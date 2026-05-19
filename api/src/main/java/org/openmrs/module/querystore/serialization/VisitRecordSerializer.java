@@ -50,7 +50,7 @@ import org.openmrs.module.querystore.util.DateFormatUtil;
  * The visit IS the document, so {@code resource_uuid} is the visit UUID and the cross-cutting
  * {@code encounter_uuid} field is not used — visits aggregate encounters via {@code encounter_uuids}
  * instead, an array carrying the visit's non-voided encounter UUIDs per the Decision 6 example.
- * The cross-cutting {@code date} comes from {@code startDatetime}; the visit's full start/stop
+ * The cross-cutting {@code record_date} comes from {@code startDatetime}; the visit's full start/stop
  * timestamps are exposed separately as {@code start_date_time} / {@code end_date_time} since
  * visits are time-ranged rather than single-instant events. Visit type is the required text
  * anchor; a visit without a type produces no document per the skip-semantics convention.

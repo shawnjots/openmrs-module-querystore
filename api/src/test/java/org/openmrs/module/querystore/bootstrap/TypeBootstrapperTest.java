@@ -12,10 +12,13 @@ package org.openmrs.module.querystore.bootstrap;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_OBS_GROUP_CONCEPT_NAME;
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_SYNONYMS;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
@@ -183,6 +186,21 @@ public class TypeBootstrapperTest {
 		        t, service.indexed.get(0).getLastModified());
 	}
 
+	@Test
+	public void projectOne_embedsEnrichedInputNotPlainText() {
+		FakeBootstrapper b = new FakeBootstrapper();
+		b.serializer.enrich = true;
+		b.queuePage(entity("a", Instant.parse("2025-01-01T00:00:00Z")));
+		BootstrapProgress progress = new BootstrapProgress("test");
+
+		b.run(progress, service, embedder, progressDao);
+
+		assertEquals(1, embedder.inputs.size());
+		assertEquals(
+		    "Vital signs — entity a SBP Systolic BP",
+		    embedder.inputs.get(0));
+	}
+
 	// ---------- fakes ----------
 
 	private static TestEntity entity(String uuid, Instant ts) {
@@ -197,6 +215,9 @@ public class TypeBootstrapperTest {
 
 	/** Indexes documents for every entity except those with uuid "skip" — exercises the null-doc path. */
 	private static class TestSerializer implements ClinicalRecordSerializer<TestEntity> {
+		/** When true, attach obs_group_concept_name + synonyms so getEmbeddingInput() diverges from getText(). */
+		boolean enrich;
+
 		@Override public String getResourceType() { return "test"; }
 		@Override public Class<TestEntity> getSupportedType() { return TestEntity.class; }
 		@Override
@@ -210,6 +231,10 @@ public class TypeBootstrapperTest {
 			doc.setPatientUuid("patient-A");
 			doc.setText("entity " + record.uuid);
 			doc.setLastModified(record.ts);
+			if (enrich) {
+				doc.putMetadata(FIELD_OBS_GROUP_CONCEPT_NAME, "Vital signs");
+				doc.putMetadata(FIELD_SYNONYMS, Arrays.asList("SBP", "Systolic BP"));
+			}
 			return doc;
 		}
 	}
@@ -278,8 +303,10 @@ public class TypeBootstrapperTest {
 	}
 
 	private static final class FakeEmbedder implements EmbeddingProvider {
+		final List<String> inputs = new ArrayList<>();
+
 		@Override public int getDimensions() { return 8; }
-		@Override public float[] embed(String text) { return new float[8]; }
+		@Override public float[] embed(String text) { inputs.add(text); return new float[8]; }
 	}
 
 	private static final class InMemoryProgressDao extends BootstrapProgressDao {

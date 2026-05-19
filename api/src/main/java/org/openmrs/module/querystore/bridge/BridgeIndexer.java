@@ -20,8 +20,9 @@ import org.openmrs.module.querystore.model.QueryDocument;
  * writes via {@link QueryStoreService#index(QueryDocument)}, which honors the
  * conditional-upsert-by-version invariant (ADR Decision 3).
  *
- * <p>Mirrors {@code TypeBootstrapper.indexOne} so the two write paths produce identical documents
- * for the same source record.
+ * <p>Mirrors {@code TypeBootstrapper.projectOne} so the two write paths produce identical
+ * documents for the same source record — both delegate the embedding-input construction to
+ * {@link QueryDocument#getEmbeddingInput()} so the rule lives on the model, not at the call sites.
  */
 public class BridgeIndexer {
 
@@ -35,7 +36,7 @@ public class BridgeIndexer {
 	}
 
 	public void index(QueryDocument doc) {
-		doc.setEmbedding(embeddingProvider.embed(doc.getText()));
+		doc.setEmbedding(embeddingProvider.embed(doc.getEmbeddingInput()));
 		queryStoreService.index(doc);
 	}
 

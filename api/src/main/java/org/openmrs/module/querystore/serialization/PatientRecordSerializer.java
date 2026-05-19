@@ -65,7 +65,7 @@ import org.openmrs.module.querystore.util.DateFormatUtil;
  * Three nested-object arrays follow the Decision 6 nested-metadata convention
  * ({@code identifiers}, {@code addresses}, {@code attributes}); identifiers and addresses sort
  * preferred-first so the citation-baked text clauses lead with the patient's primary entries.
- * Cross-cutting {@code date} falls back to {@code dateCreated} since patients have no
+ * Cross-cutting {@code record_date} falls back to {@code dateCreated} since patients have no
  * clinical-event timestamp. The display name resolved from the preferred PersonName is the
  * required text anchor; a patient with no name produces no document per the skip-semantics
  * convention.

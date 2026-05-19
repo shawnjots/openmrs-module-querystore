@@ -12,8 +12,11 @@ package org.openmrs.module.querystore.bridge;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_OBS_GROUP_CONCEPT_NAME;
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_SYNONYMS;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -52,7 +55,25 @@ public class BridgeIndexerTest {
 		assertSame(doc, indexed);
 		assertNotNull("embedding populated", indexed.getEmbedding());
 		assertEquals(8, indexed.getEmbedding().length);
-		assertEquals(1, embedder.calls);
+		assertEquals(1, embedder.inputs.size());
+		assertEquals("Fasting blood glucose: 11.2 mmol/L", embedder.inputs.get(0));
+	}
+
+	@Test
+	public void index_embeddingInputIncludesGroupNameAndSynonyms() {
+		QueryDocument doc = new QueryDocument();
+		doc.setResourceType("obs");
+		doc.setResourceUuid("u-2");
+		doc.setText("Systolic blood pressure: 120 mmHg");
+		doc.putMetadata(FIELD_OBS_GROUP_CONCEPT_NAME, "Vital signs");
+		doc.putMetadata(FIELD_SYNONYMS, Arrays.asList("SBP", "Systolic BP"));
+
+		indexer.index(doc);
+
+		assertEquals(1, embedder.inputs.size());
+		assertEquals(
+		    "Vital signs — Systolic blood pressure: 120 mmHg SBP Systolic BP",
+		    embedder.inputs.get(0));
 	}
 
 	@Test
@@ -80,13 +101,13 @@ public class BridgeIndexerTest {
 	}
 
 	private static final class CountingEmbedder implements EmbeddingProvider {
-		int calls;
+		final List<String> inputs = new ArrayList<>();
 
 		@Override public int getDimensions() { return 8; }
 
 		@Override
 		public float[] embed(String text) {
-			calls++;
+			inputs.add(text);
 			return new float[8];
 		}
 	}

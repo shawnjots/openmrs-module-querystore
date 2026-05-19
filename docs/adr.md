@@ -278,7 +278,7 @@ Example documents:
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "obs",
   "resource_uuid": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "date": "2025-03-15",
+  "record_date": "2025-03-15",
   "text": "Fasting blood glucose: 11.2 mmol/L",
   "embedding": [0.023, -0.041, 0.078, ...],
   "concept_uuid": "3cd6f600-26fe-102b-80cb-0017a47871b2",
@@ -318,7 +318,7 @@ Example documents:
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "obs",
   "resource_uuid": "ba8c1d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e",
-  "date": "2025-03-15",
+  "record_date": "2025-03-15",
   "text": "Systolic blood pressure: 120 mmHg",
   "embedding": [0.027, -0.038, 0.062, ...],
   "concept_uuid": "5085AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -360,7 +360,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "condition",
   "resource_uuid": "d4e5f6a7-8b9c-0d1e-2f3a-4b5c6d7e8f9a",
-  "date": "2023-06-10",
+  "record_date": "2023-06-10",
   "text": "Condition: Type 2 Diabetes Mellitus. Status: ACTIVE. Verification: CONFIRMED. Onset: 2020-03-15",
   "embedding": [0.015, -0.062, 0.044, ...],
   "concept_uuid": "5cd3f6a0-26fe-102b-80cb-0017a47871b2",
@@ -391,7 +391,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "diagnosis",
   "resource_uuid": "e5f6a7b8-9c0d-1e2f-3a4b-5c6d7e8f9a0b",
-  "date": "2025-06-29",
+  "record_date": "2025-06-29",
   "text": "Diagnosis: Tuberculosis. Certainty: CONFIRMED. Rank: Primary",
   "embedding": [0.031, -0.019, 0.087, ...],
   "concept_uuid": "7ef4a8b2-36de-112b-90db-1127b58972c3",
@@ -419,7 +419,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "drug_order",
   "resource_uuid": "a7b8c9d0-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
-  "date": "2025-01-10",
+  "record_date": "2025-01-10",
   "text": "Drug order: Metformin 500mg. Dose: 1.0 Tablet(s) Oral twice daily. Duration: 30 Day(s). Quantity: 60.0 Tablet(s). Action: NEW. Urgency: ROUTINE. Take with food",
   "embedding": [0.042, -0.028, 0.053, ...],
   "concept_uuid": "9ab2c4d6-48ef-223c-a1eb-2238c69083d4",
@@ -469,7 +469,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "allergy",
   "resource_uuid": "b8c9d0e1-2f3a-4b5c-6d7e-8f9a0b1c2d3e",
-  "date": "2024-12-29",
+  "record_date": "2024-12-29",
   "text": "Allergy: Penicillin (drug allergen). Severity: Severe. Reactions: Anaphylaxis, Rash",
   "embedding": [0.018, -0.055, 0.071, ...],
   "allergen_uuid": "c2d3e4f5-6a7b-8c9d-0e1f-2a3b4c5d6e7f",
@@ -492,7 +492,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "program",
   "resource_uuid": "c9d0e1f2-3a4b-5c6d-7e8f-9a0b1c2d3e4f",
-  "date": "2024-01-15",
+  "record_date": "2024-01-15",
   "text": "Program: HIV Treatment. Enrolled: 2024-01-15. Status: Active. Current state: On ART",
   "embedding": [0.027, -0.038, 0.062, ...],
   "program_uuid": "a3b4c5d6-7e8f-9a0b-1c2d-3e4f5a6b7c8d",
@@ -515,7 +515,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "medication_dispense",
   "resource_uuid": "d0e1f2a3-4b5c-6d7e-8f9a-0b1c2d3e4f5a",
-  "date": "2025-01-10",
+  "record_date": "2025-01-10",
   "text": "Dispensed: Metformin 500mg. Status: Completed. Quantity: 60.0 Tablet(s). Dose: 1.0 Tablet(s) Oral twice daily. Handed over: 2025-01-10",
   "embedding": [0.033, -0.047, 0.058, ...],
   "concept_uuid": "9ab2c4d6-48ef-223c-a1eb-2238c69083d4",
@@ -561,7 +561,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "test_order",
   "resource_uuid": "e1f2a3b4-5c6d-7e8f-9a0b-1c2d3e4f5a6b",
-  "date": "2025-06-29",
+  "record_date": "2025-06-29",
   "text": "Test order: X-Ray Chest. Laterality: LEFT. Clinical history: Persistent cough for 3 weeks. Action: NEW. Urgency: STAT",
   "embedding": [0.021, -0.034, 0.069, ...],
   "concept_uuid": "8bc3d5e7-59fg-334d-b2fc-3349d7a194e5",
@@ -597,7 +597,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "patient",
   "resource_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
-  "date": "2018-04-22",
+  "record_date": "2018-04-22",
   "text": "Patient: Achieng Otieno. Female. Born 1982-07-14. Address: Kibera, Nairobi, Kenya. Identifiers: MRN 100023, National ID 12345678",
   "embedding": [0.012, -0.054, 0.067, ...],
   "given_name": "Achieng",
@@ -653,7 +653,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "encounter",
   "resource_uuid": "a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6e",
-  "date": "2025-03-15",
+  "record_date": "2025-03-15",
   "text": "Encounter: Adult Outpatient Visit at Kenyatta National Hospital. Provider: Dr. Ochieng (Clinician). Form: Adult Outpatient Form",
   "embedding": [0.019, -0.043, 0.058, ...],
   "encounter_type_uuid": "e1f2a3b4-5c6d-7e8f-9a0b-1c2d3e4f5a6b",
@@ -680,7 +680,7 @@ The stored `text` is just `"Systolic blood pressure: 120 mmHg"`, but the embeddi
   "patient_uuid": "8a7b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
   "resource_type": "visit",
   "resource_uuid": "f2a3b4c5-6d7e-8f9a-0b1c-2d3e4f5a6b7c",
-  "date": "2025-03-15",
+  "record_date": "2025-03-15",
   "text": "Visit: Outpatient at Kenyatta National Hospital. Indication: Routine follow-up for diabetes",
   "embedding": [0.024, -0.036, 0.061, ...],
   "visit_type_uuid": "e9f7c24d-30ff-8135-e96a-9402fd905155",
@@ -719,10 +719,10 @@ Two cross-cutting conventions apply to documents that carry a primary clinical c
 
 Patterns common to all type-specific serializers, distilled from the Obs and Condition implementations. These are contract-level rules; the abstract base implements the template-method shape that enforces them.
 
-**Cross-cutting `date` source.** The cross-cutting `date` field uses the type's most clinically meaningful "this record was made" timestamp:
+**Cross-cutting `record_date` source.** The cross-cutting `record_date` field uses the type's most clinically meaningful "this record was made" timestamp:
 - Types with a clinical-event time field (e.g., `obs_datetime` on Obs) use that.
 - Types without one (e.g., Condition) fall back to `dateCreated` (the audit field).
-- Onset, end, resolution, and other clinical-fact dates remain on dedicated metadata fields per [Decision 7](#decision-7-date-separation--excluded-from-embeddings-included-at-query-time) — they are *not* the cross-cutting `date`.
+- Onset, end, resolution, and other clinical-fact dates remain on dedicated metadata fields per [Decision 7](#decision-7-date-separation--excluded-from-embeddings-included-at-query-time) — they are *not* the cross-cutting `record_date`.
 
 **Free-text annotations are metadata-only.** Free-text clinician annotations — `comment` on obs, `additional_detail` on condition, and the equivalent on other types — are excluded from the stored `text` field but indexed as metadata for BM25 keyword matching. Citation-clean text is the contract; consumers that want the annotation render it from the metadata field at presentation time.
 
@@ -751,7 +751,7 @@ Patterns common to all type-specific serializers, distilled from the Obs and Con
 | `patient_uuid` | Filter search to a single patient's chart, or aggregate across patients |
 | `resource_type` | Distinguish record types (e.g., "obs", "condition", "diagnosis", "drug_order", "test_order", "referral_order", "allergy", "program", "medication_dispense", "patient", "encounter", "visit"); route documents to the correct per-type index |
 | `resource_uuid` | Link back to the source record in OpenMRS (e.g., the obs UUID, condition UUID, order UUID, allergy UUID, patient UUID, encounter UUID, etc., depending on the resource_type) |
-| `date` | Date range filtering and sorting (e.g., "labs from last 6 months", "most recent vital signs") |
+| `record_date` | Date range filtering and sorting (e.g., "labs from last 6 months", "most recent vital signs") |
 | `last_modified` | Source-entity version timestamp (sourced from `dateChanged ?? dateCreated` for `BaseOpenmrsData` records) used by the backend as a write-version per [Decision 3](#decision-3-pluggable-backend-spi-with-three-reference-implementations) invariant 3 to drop stale concurrent writes. Optional: null disables version protection for that document (last-write-wins). Not a query-time field; carried for write coordination |
 | `text` | BM25 keyword search matches against it; the LLM reads it when generating answers. Embedding input is derived from `text` enriched with `obs_group_concept_name` and `synonyms` per the [Synonyms and group obs convention](#synonyms-and-group-obs-convention); stored `text` itself stays focused for clean citations and is not what the embedder sees |
 | `embedding` | Dense vector for semantic similarity search (e.g., "blood sugar control" matching an HbA1c result) |
@@ -781,7 +781,7 @@ Patterns common to all type-specific serializers, distilled from the Obs and Con
 | `encounter_type_uuid` / `encounter_type_name` | (encounter-scoped records) Denormalized encounter type for filtering ("all admission obs", "all dispense events") without joining against the encounter index; UUID enables locale-independent filtering per [Decision 9](#decision-9-coded-fields--store-both-uuid-and-name) |
 | `visit_uuid` | (encounter-scoped records) Denormalized visit pointer; lets you aggregate everything from one visit (which may span multiple encounters) without indirection through the encounter |
 | `form_uuid` / `form_name` | (encounter-scoped records) Identifies which form captured the data; used for data-quality audits and form-scoped queries |
-| `onset_date` | (conditions) Clinical date the condition started; distinct from `date` (the record creation date); included in the embedded text as a clinical fact per [Decision 7](#decision-7-date-separation--excluded-from-embeddings-included-at-query-time) |
+| `onset_date` | (conditions) Clinical date the condition started; distinct from `record_date` (the record creation date); included in the embedded text as a clinical fact per [Decision 7](#decision-7-date-separation--excluded-from-embeddings-included-at-query-time) |
 | `order_number` | (orders) Human-readable order reference (e.g., ORD-1234) for display and linking back to source UI |
 | `date_stopped` | (orders) Date an order was manually discontinued; null if still active; required for filtering active vs. stopped orders |
 | `auto_expire_date` | (orders) Scheduled expiry date computed from duration; null if open-ended; required for filtering active vs. expired orders |
@@ -853,13 +853,13 @@ Exclude observation dates from the text that is embedded. Include dates as struc
 
 - **For embedding**: `"Fasting blood glucose: 11.2 mmol/L"`
 - **For LLM prompt**: `"(2025-03-15) Fasting blood glucose: 11.2 mmol/L"`
-- **For filtering**: `"date": "2025-03-15"` as a structured field
+- **For filtering**: `"record_date": "2025-03-15"` as a structured field
 
 ### Rationale
 Two identical clinical observations recorded on different dates are semantically identical — they mean the same thing clinically. Including dates in the text would produce different embedding vectors for the same clinical content, reducing retrieval quality. A search for "abnormal blood sugar" should find all abnormal blood sugar results equally, regardless of when they were recorded.
 
 Dates are still available through:
-- The `date` metadata field for range filtering and sorting.
+- The `record_date` metadata field for range filtering and sorting.
 - Prepending at prompt assembly time when the LLM needs temporal context for reasoning.
 
 **Exception**: Clinically significant dates that are distinct from the record timestamp should be included in the embedded text — for example, condition resolution dates, order discontinuation dates, or program enrollment dates. These represent clinical facts, not administrative timestamps.
@@ -1115,7 +1115,7 @@ Querystore retains ownership of the shared infrastructure:
 - Locale-aware serialization conventions ([Decision 8](#decision-8-locale-specific-serialization-with-multilingual-embeddings)).
 - The self-sufficiency principle ([Decision 1](#decision-1-cqrs-pattern--separate-read-store-from-transactional-database)).
 
-**Cross-cutting field contract.** Every module-contributed document must include the same cross-cutting fields that core-type documents include: `patient_uuid`, `resource_type`, `resource_uuid`, `date`, `last_modified`, `text`, `embedding`, and where applicable `location_uuid` / `location_name`, `provider_uuid` / `provider_name`, `encounter_uuid`, `visit_uuid`, `form_uuid` / `form_name`, and `encounter_type_uuid` / `encounter_type_name`. Modules may add as many type-specific fields as they need beyond these. The cross-cutting set is non-negotiable — without it, cross-type queries break, and `last_modified` specifically is what makes the backend's [Decision 3](#decision-3-pluggable-backend-spi-with-three-reference-implementations) conditional-upsert guard work for module-contributed types under the same race conditions as core types.
+**Cross-cutting field contract.** Every module-contributed document must include the same cross-cutting fields that core-type documents include: `patient_uuid`, `resource_type`, `resource_uuid`, `record_date`, `last_modified`, `text`, `embedding`, and where applicable `location_uuid` / `location_name`, `provider_uuid` / `provider_name`, `encounter_uuid`, `visit_uuid`, `form_uuid` / `form_name`, and `encounter_type_uuid` / `encounter_type_name`. Modules may add as many type-specific fields as they need beyond these. The cross-cutting set is non-negotiable — without it, cross-type queries break, and `last_modified` specifically is what makes the backend's [Decision 3](#decision-3-pluggable-backend-spi-with-three-reference-implementations) conditional-upsert guard work for module-contributed types under the same race conditions as core types.
 
 **Cross-type query convention.** Consumers needing unified retrieval query the `querystore_*` wildcard pattern. This was already permitted by [Decision 4](#decision-4-per-type-indices-over-a-single-index); promoting it to the official cross-type contract is part of this decision. Per-type queries continue to use the specific index name. Embedding-based queries against the wildcard work because every contributing module embeds via the same pipeline (next point).
 
@@ -1330,7 +1330,7 @@ A query like "all glucose-related results" should match HbA1c, FPG, RBS, and oth
 Out-of-v1 by design; the gating signal for re-opening this is whether the chartsearchai eval workflow surfaces queries that need knowledge-base projections to answer well, or whether downstream consumers (FHIR analytics, AI agents reasoning over coded data) request it concretely.
 
 ### Timestamp time-zone convention
-Documents mix date-only fields (`date`, `birthdate`) with timestamp fields (`start_date_time`, `end_date_time`, `date_handed_over`). The time zone for timestamps is unspecified. UTC is the obvious default, but OpenMRS data often originates in deployment-local time and is stored without a zone offset. The convention needs to be explicit so consumers know how to interpret a value like `start_date_time = "2025-03-15T09:30:00"` and so date-range filters match consistently.
+Documents mix date-only fields (`record_date`, `birthdate`) with timestamp fields (`start_date_time`, `end_date_time`, `date_handed_over`). The time zone for timestamps is unspecified. UTC is the obvious default, but OpenMRS data often originates in deployment-local time and is stored without a zone offset. The convention needs to be explicit so consumers know how to interpret a value like `start_date_time = "2025-03-15T09:30:00"` and so date-range filters match consistently.
 
 ### Person vs Patient model
 The `querystore_patient` index conflates Person attributes (name, gender, birthdate, addresses, attributes) with Patient attributes (identifiers). In OpenMRS core these are separate entities — a Person can exist without being a Patient (e.g., providers, relatives). The current flattening is appropriate for a read-side projection focused on patient queries, but should be made explicit so downstream consumers do not expect a `querystore_persons` resource type to also exist or look for non-patient Persons in this index.

@@ -49,11 +49,16 @@ Implement `ClinicalRecordSerializer<YourEntity>`. Populate the cross-cutting fie
 | `resource_uuid` | yes | Your entity's UUID. |
 | `patient_uuid` | yes if the record is patient-scoped | Skip only for non-patient resources (e.g., a knowledge-base type). |
 | `last_modified` | yes | `dateChanged ?? dateCreated`. Used by the backend's conditional-upsert race guard. |
-| `date` | yes | The record's effective clinical date (not the modification timestamp). |
+| `record_date` | yes | The record's effective clinical date (not the modification timestamp). |
 | `text` | yes | Labeled prose; this is what gets indexed for BM25 and embedded for kNN. |
 | `embedding` | leave unset | Querystore embeds at write time. |
 
 Type-specific fields go in `putMetadata(key, value)`. Encounter / visit / location / provider denormalizations belong here when applicable.
+
+If your records carry a primary coded concept, also populate these via `putMetadata` so the framework enriches the embedding input per [ADR Decision 6's Synonyms-and-group-obs convention](./adr.md#synonyms-and-group-obs-convention):
+
+- `synonyms` — a `List<String>` of locale-aware concept synonyms (use `ConceptNameUtil.getSynonyms(...)`). Concatenated onto the embedding input so vectors are synonym-aware (an "HTN" query hits a doc whose preferred name is "Hypertension" without forcing consumers to expand synonyms at query time).
+- `obs_group_concept_name` — the parent group concept's name, for records that are members of a group obs. Prepended to the embedding input (but not the stored `text`) so group-level semantic queries match member vectors.
 
 ```java
 public class BillSerializer implements ClinicalRecordSerializer<Bill> {

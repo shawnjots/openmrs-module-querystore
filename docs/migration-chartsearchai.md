@@ -20,7 +20,7 @@ Notes capturing what came out of the design discussion, for the team that takes 
 | Hybrid BM25 + kNN | Both indexed; consumer issues RRF or other fusion at query time | [Decision 6](./adr.md#decision-6-document-model--text-embeddings-and-structured-metadata) |
 | Patient-scoped queries | `patient_uuid` on every doc | |
 | Resource citation | `resource_type` + `resource_uuid` | |
-| Recency / date filtering | `date` field on every doc | [Decision 7](./adr.md#decision-7-date-separation--excluded-from-embeddings-included-at-query-time) |
+| Recency / date filtering | `record_date` field on every doc | [Decision 7](./adr.md#decision-7-date-separation--excluded-from-embeddings-included-at-query-time) |
 | Locale-aware concept names | [Decision 8](./adr.md#decision-8-locale-specific-serialization-with-multilingual-embeddings) | |
 | Voiding handling | [Decision 10](./adr.md#decision-10-voided-records--deleted-from-the-read-store-not-marked) | |
 | Encounter-scoped events | [Decision 12](./adr.md#decision-12-sync-mechanism--events-first-aop-as-last-resort-gap-filler) + gap inventory | |

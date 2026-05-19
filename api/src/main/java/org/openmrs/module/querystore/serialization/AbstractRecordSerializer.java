@@ -45,7 +45,7 @@ import org.openmrs.module.querystore.util.ConceptNameUtil;
 /**
  * Skeleton for {@link ClinicalRecordSerializer} implementations. The {@link #serialize(Object)}
  * template method fills in the cross-cutting fields ({@code patient_uuid}, {@code resource_type},
- * {@code resource_uuid}, {@code date}); subclasses populate type-specific text and metadata in a
+ * {@code resource_uuid}, {@code record_date}); subclasses populate type-specific text and metadata in a
  * single {@link #populate} pass so each record is walked once. Helpers are provided for concept
  * and encounter denormalization.
  */

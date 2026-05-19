@@ -9,15 +9,23 @@
  */
 package org.openmrs.module.querystore.model;
 
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_OBS_GROUP_CONCEPT_NAME;
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_SYNONYMS;
+
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
  * A document written to the query store. Mirrors the three-component model from ADR decision 6:
- * plain-text chunk, dense-vector embedding, and structured metadata.
+ * plain-text chunk, dense-vector embedding, and structured metadata. {@code text} is the
+ * citation-clean stored body — what BM25 indexes and what the LLM cites. The embedding input is
+ * a separate, derived view from {@link #getEmbeddingInput()} that enriches {@code text} with
+ * synonyms and group-concept context per ADR Decision 6. The two must not be conflated at write
+ * time.
  *
  * <p>{@code lastModified} carries the source entity's "this projection is current as of" timestamp
  * (typically {@code dateChanged} falling back to {@code dateCreated}) so the backend can drop
@@ -74,6 +82,11 @@ public class QueryDocument {
 		this.date = date;
 	}
 
+	/**
+	 * Stored, citation-clean text body. This is NOT what the embedder receives — use
+	 * {@link #getEmbeddingInput()} at write time for the enriched embedding input per ADR
+	 * Decision 6's Synonyms-and-group-obs convention.
+	 */
 	public String getText() {
 		return text;
 	}
@@ -105,5 +118,42 @@ public class QueryDocument {
 	public QueryDocument putMetadata(String key, Object value) {
 		metadata.put(key, value);
 		return this;
+	}
+
+	/**
+	 * The input the embedder should see for this document, derived from {@link #text} and the
+	 * structured fields per ADR Decision 6's Synonyms-and-group-obs convention:
+	 * {@code embed = [obs_group_concept_name + " — "] + text + [" " + synonyms.join(" ")]}
+	 * (bracketed parts conditional on presence). Both write paths
+	 * ({@code BridgeIndexer}, {@code TypeBootstrapper}) call this so they produce identical vectors
+	 * for the same source record, and so the embedding-input contract lives on the model rather
+	 * than being re-derived at each write site.
+	 *
+	 * <p>Edge-case behavior: the group-concept prefix is only emitted when {@code text} is also
+	 * present — a dangling separator with no body to prefix would add noise to the embedder. Empty
+	 * synonym strings are filtered for the same reason.
+	 */
+	public String getEmbeddingInput() {
+		String stored = text == null ? "" : text;
+		StringBuilder sb = new StringBuilder();
+		if (!stored.isEmpty()) {
+			Object groupName = metadata.get(FIELD_OBS_GROUP_CONCEPT_NAME);
+			if (groupName instanceof String && !((String) groupName).isEmpty()) {
+				sb.append(groupName).append(" — ");
+			}
+			sb.append(stored);
+		}
+		Object synonyms = metadata.get(FIELD_SYNONYMS);
+		if (synonyms instanceof List) {
+			for (Object synonym : (List<?>) synonyms) {
+				if (synonym instanceof String && !((String) synonym).isEmpty()) {
+					if (sb.length() > 0) {
+						sb.append(' ');
+					}
+					sb.append(synonym);
+				}
+			}
+		}
+		return sb.toString();
 	}
 }

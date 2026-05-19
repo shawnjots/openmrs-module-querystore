@@ -183,7 +183,7 @@ public abstract class TypeBootstrapper<T> {
 		try {
 			QueryDocument doc = getSerializer().serialize(entity);
 			if (doc != null) {
-				doc.setEmbedding(embedder.embed(doc.getText()));
+				doc.setEmbedding(embedder.embed(doc.getEmbeddingInput()));
 				service.index(doc);
 				return true;
 			}
