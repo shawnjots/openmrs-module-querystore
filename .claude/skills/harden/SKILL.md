@@ -1,7 +1,7 @@
 ---
 name: harden
 description: Run iterative /review and /simplify passes on the current slice in two phases until both converge. Use when the user wants to harden a code slice end-to-end without manually orchestrating the review/simplify dance. Trigger phrases include "harden this", "polish until done", "iterate until convergence", "harden".
-version: 0.1.0
+version: 0.2.0
 ---
 
 # Harden
@@ -32,7 +32,7 @@ If you cannot truthfully complete that sentence, the slice is NOT ready for Phas
 
 Run simplify passes until polish opportunities converge. Each pass:
 
-1. Spawn three parallel review agents (reuse, quality, efficiency) over the current diff.
+1. Spawn three parallel review agents (reuse, quality, efficiency) over the current diff. After the first pass, brief subsequent passes' agents with the applied and deferred lists from prior passes so they don't re-surface them.
 2. Aggregate findings across the three agents.
 3. Apply genuinely actionable items; skip stylistic noise and items prior passes addressed.
 4. Verify with the build.
@@ -69,6 +69,7 @@ After stopping, summarize:
 - **Don't run another pass** if the only items are below the noise floor or the agents start agreeing on "nothing actionable."
 - **Don't pause for user input between passes** unless something is genuinely ambiguous. The skill is meant to converge autonomously up to the stopping rules.
 - **Don't promote architectural concerns** into in-pass fixes. Items like "this Hibernate proxy hits the DB at backfill scale" are real but belong in the indexer/sync layer, not in the slice being polished — flag and defer.
+- **Don't batch-defer "Minor" items by severity label.** Severity labels are an agent's guess, not a verdict. Before deferring any finding, write the concrete failure mode out loud: "if we ship without this, X breaks because Y." If you can't complete that sentence, you don't yet understand the severity — re-read the finding, trace its consequence, and either apply the fix or write down what you'd need to know to defer it. This rule is load-bearing: agents routinely under-label correctness fixes as Minor (e.g. unclosed `AutoCloseable`s, leaked test state) because the code-pattern looks small.
 
 ## When NOT to use this skill
 
