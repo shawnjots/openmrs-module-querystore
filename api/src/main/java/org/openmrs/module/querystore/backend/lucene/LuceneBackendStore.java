@@ -18,6 +18,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -228,10 +229,7 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 
 	@Override
 	public BulkWriteResult bulkDeleteByPatient(String patientUuid) {
-		Set<String> indexNames = schemaManager.knownIndexNames();
-		if (indexNames.isEmpty()) {
-			indexNames = schemaManager.listAllIndexes();
-		}
+		Set<String> indexNames = allIndexNames();
 		List<DocFailure> failures = new ArrayList<>();
 		int totalAttempted = 0;
 		int totalDeleted = 0;
@@ -266,10 +264,7 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 		if (StringUtils.isBlank(patientUuid)) {
 			return false;
 		}
-		Set<String> indexNames = schemaManager.knownIndexNames();
-		if (indexNames.isEmpty()) {
-			indexNames = schemaManager.listAllIndexes();
-		}
+		Set<String> indexNames = allIndexNames();
 		if (indexNames.isEmpty()) {
 			return false;
 		}
@@ -517,12 +512,9 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 
 	private List<String> resolveResourceTypes(SearchRequest req) {
 		if (req.getResourceTypes().isEmpty()) {
-			Set<String> known = schemaManager.knownIndexNames();
-			if (known.isEmpty()) {
-				known = schemaManager.listAllIndexes();
-			}
-			List<String> types = new ArrayList<>(known.size());
-			for (String indexName : known) {
+			Set<String> indexNames = allIndexNames();
+			List<String> types = new ArrayList<>(indexNames.size());
+			for (String indexName : indexNames) {
 				types.add(BackendDocs.stripPrefix(indexName));
 			}
 			return types;
@@ -533,6 +525,22 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 			schemaManager.ensureWriter(type);
 		}
 		return new ArrayList<>(req.getResourceTypes());
+	}
+
+	/**
+	 * Cross-type enumerator used by every wildcard read path (search, bulk delete, exists probe).
+	 * Always merges the on-disk listing with the in-memory writer cache. The pre-existing
+	 * "if known is empty, listAllIndexes" short-circuit silently dropped any type whose index
+	 * directory was inherited from a prior JVM (bootstrap COMPLETED → no rewrites this session)
+	 * as soon as another type had been touched this session — the symptom that hid all of Betty's
+	 * appointment hits behind a single bill hit after the bridge UserContext fix landed.
+	 * {@link LuceneSchemaManager#listAllIndexes()} also opens writers for newly-discovered types
+	 * as a side effect, so the merge keeps the cache warm.
+	 */
+	private Set<String> allIndexNames() {
+		Set<String> indexNames = new HashSet<>(schemaManager.listAllIndexes());
+		indexNames.addAll(schemaManager.knownIndexNames());
+		return indexNames;
 	}
 
 	private Query buildBm25Query(String queryText, Query filterQuery) throws ParseException {

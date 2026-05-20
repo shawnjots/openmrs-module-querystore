@@ -20,7 +20,9 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import org.junit.AfterClass;
@@ -29,6 +31,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.openmrs.api.db.hibernate.DbSessionFactory;
 import org.openmrs.module.querystore.backend.BackendCapabilities;
+import org.openmrs.module.querystore.backend.Hit;
 import org.openmrs.module.querystore.backend.BulkWriteResult;
 import org.openmrs.module.querystore.backend.Filter;
 import org.openmrs.module.querystore.backend.JdbcSupport;
@@ -286,6 +289,41 @@ public class MysqlBackendStoreIntegrationTest {
 		// even on a slow CI runner. Real assertion is "didn't full-scan" — wall time is the cheapest
 		// proxy without parsing EXPLAIN output.
 		assertTrue("patient-scoped query took " + elapsedMs + "ms; expected <5000ms", elapsedMs < 5000);
+	}
+
+	@Test
+	public void wildcardSearchHitsOnDiskTablesFromPriorSessions() {
+		// Mysql-side regression guard for the same bug fixed in LuceneBackendStore:
+		// "if known is empty, listAllTables" short-circuits silently dropped any type whose
+		// table existed on disk but whose `ensureTable` hadn't fired in the current JVM. Once
+		// any single type was touched this session, every other on-disk type fell out of
+		// wildcard reads. Concrete failure: chartsearchai/QueryStoreChartBuilder.searchByPatient
+		// returned 1 hit instead of 7 for a patient with cross-type data, after the bridge
+		// UserContext fix wired a single type via AOP.
+		QueryDocument priorObs = doc("obs", "patient-cross-session", "shared keyword obs", null);
+		assertTrue(backend.upsert(priorObs).isSucceeded());
+
+		// Fresh backend → fresh empty knownTables cache. Simulates "JVM restart with obs already
+		// on disk." Touching condition this session populates the cache with only condition; the
+		// obs table on disk must still be visible to a wildcard search.
+		MysqlBackendStore secondSession = new MysqlBackendStore(sessionFactory);
+		secondSession.ensureSchema("condition", SchemaSpec.builder(8).build());
+		QueryDocument freshCondition = doc("condition", "patient-cross-session",
+		        "shared keyword condition", null);
+		assertTrue(secondSession.upsert(freshCondition).isSucceeded());
+
+		SearchResult result = secondSession.bm25(SearchRequest.builder()
+		        .queryText("shared")
+		        .filter(Filter.patientScope("patient-cross-session"))
+		        .limit(10).build());
+		Set<String> hitTypes = new HashSet<>();
+		for (Hit h : result.getHits()) {
+			hitTypes.add(h.getDocument().getResourceType());
+		}
+		assertEquals("wildcard must include the on-disk obs table not opened this session",
+		        new HashSet<>(Arrays.asList("obs", "condition")), hitTypes);
+		assertTrue("existsByPatient must also see the on-disk obs row",
+		        secondSession.existsByPatient("patient-cross-session"));
 	}
 
 	@Test

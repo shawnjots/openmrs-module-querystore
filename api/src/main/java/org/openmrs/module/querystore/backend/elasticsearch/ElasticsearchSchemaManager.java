@@ -131,9 +131,10 @@ final class ElasticsearchSchemaManager {
 	}
 
 	static String indexName(String resourceType) {
-		if (resourceType == null || !resourceType.matches("[a-z][a-z0-9_]*")) {
+		if (resourceType == null || !QueryStoreConstants.RESOURCE_TYPE_PATTERN.matcher(resourceType).matches()) {
 			throw new IllegalArgumentException(
-			        "Invalid resource type (must match [a-z][a-z0-9_]*): " + resourceType);
+			        "Invalid resource type (must match " + QueryStoreConstants.RESOURCE_TYPE_REGEX
+			                + "): " + resourceType);
 		}
 		return QueryStoreConstants.INDEX_PREFIX + resourceType;
 	}

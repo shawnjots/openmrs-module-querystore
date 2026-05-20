@@ -40,6 +40,11 @@ final class LuceneSchemaManager implements AutoCloseable {
 
 	private final ConcurrentMap<String, IndexWriter> writers = new ConcurrentHashMap<>();
 
+	// One-shot dedup for "skipped stale directory" WARN logs (mirrors MysqlSchemaManager.warnedStaleNames).
+	// Operators upgrading from a prior version with mixed-case identifiers (querystore_LegacyObs/) need
+	// to see the artefact once; without dedup the warn fires on every wildcard read.
+	private final Set<String> warnedStaleNames = ConcurrentHashMap.newKeySet();
+
 	LuceneSchemaManager(Path indexRoot) {
 		this.indexRoot = indexRoot;
 	}
@@ -81,9 +86,22 @@ final class LuceneSchemaManager implements AutoCloseable {
 	 * (e.g. {@code bulkDeleteByPatient}) where the caller does not know which types contain
 	 * documents for a given patient. Symmetric with the MySQL backend's {@code listAllTables}.
 	 *
-	 * <p>Side-effect: any directory discovered here that doesn't already have a cached writer gets
-	 * one opened eagerly — the caller's next {@link #ensureWriter(String)} for that type is then a
+	 * <p>Directories whose stripped resource-type names don't match
+	 * {@link QueryStoreConstants#RESOURCE_TYPE_PATTERN} (stale {@code querystore_LegacyObs}
+	 * leftover from a previous version, manual rename artefacts) are filtered out so they don't
+	 * bleed into wildcard search results — the same regex that gates writes gates reads. Each
+	 * stale name is logged WARN exactly once per JVM lifetime so an upgrading operator can spot
+	 * the artefact without log spam.
+	 *
+	 * <p>Side-effect: any matched directory that doesn't already have a cached writer gets one
+	 * opened eagerly — the caller's next {@link #ensureWriter(String)} for that type is then a
 	 * cache hit. Callers that just want a read-only enumeration are not the intended audience.
+	 *
+	 * <p>Unlike {@code MysqlSchemaManager.listAllTables()} this method is NOT memoized: the
+	 * filesystem {@code DirectoryStream} is dominated by OS page-cache hits and is sub-millisecond
+	 * even on a cold cache, where the MySQL probe is a real JDBC round-trip per call. The
+	 * {@code writers} {@link ConcurrentHashMap} is itself the cross-session cache; this method
+	 * just primes it.
 	 */
 	Set<String> listAllIndexes() {
 		Set<String> names = new HashSet<>();
@@ -93,10 +111,36 @@ final class LuceneSchemaManager implements AutoCloseable {
 		try (DirectoryStream<Path> stream = Files.newDirectoryStream(indexRoot,
 		    QueryStoreConstants.INDEX_PREFIX + "*")) {
 			for (Path child : stream) {
-				if (Files.isDirectory(child)) {
-					String name = child.getFileName().toString();
-					names.add(name);
+				if (!Files.isDirectory(child)) {
+					continue;
+				}
+				String name = child.getFileName().toString();
+				String resourceType = name.substring(QueryStoreConstants.INDEX_PREFIX.length());
+				if (!QueryStoreConstants.RESOURCE_TYPE_PATTERN.matcher(resourceType).matches()) {
+					if (warnedStaleNames.add(name)) {
+						log.warn("Ignoring querystore index directory '" + name + "' — resource-type '"
+						        + resourceType + "' does not match " + QueryStoreConstants.RESOURCE_TYPE_REGEX
+						        + " (likely leftover from a prior version or a manual rename;"
+						        + " delete the directory to silence this warning).");
+					}
+					continue;
+				}
+				// Per-directory openWriter failure isolation. Pre-cross-session-fix, only
+				// ensureWriter(resourceType) primed writers — a stale `write.lock` would only fail
+				// the specific resource-type request. Now that the wildcard enumerator primes
+				// writers for every on-disk dir, a single bad directory would otherwise take down
+				// the entire cross-type read path (bulkDeleteByPatient, existsByPatient, bm25/knn).
+				// Swallow per-dir with a WARN so one bad index doesn't become a global outage; the
+				// next ensureWriter(resourceType) call from a specific code path can still surface
+				// the failure to that caller.
+				try {
 					writers.computeIfAbsent(name, this::openWriter);
+					names.add(name);
+				}
+				catch (RuntimeException ex) {
+					log.warn("Could not open Lucene index directory '" + name + "'; skipping for"
+					        + " this enumeration. A type-specific ensureWriter call will surface"
+					        + " the underlying error to the caller of that path.", ex);
 				}
 			}
 		}
@@ -122,9 +166,10 @@ final class LuceneSchemaManager implements AutoCloseable {
 	}
 
 	static String indexName(String resourceType) {
-		if (resourceType == null || !resourceType.matches("[a-z][a-z0-9_]*")) {
+		if (resourceType == null || !QueryStoreConstants.RESOURCE_TYPE_PATTERN.matcher(resourceType).matches()) {
 			throw new IllegalArgumentException(
-			        "Invalid resource type (must match [a-z][a-z0-9_]*): " + resourceType);
+			        "Invalid resource type (must match " + QueryStoreConstants.RESOURCE_TYPE_REGEX
+			                + "): " + resourceType);
 		}
 		return QueryStoreConstants.INDEX_PREFIX + resourceType;
 	}

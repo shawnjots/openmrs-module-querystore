@@ -427,6 +427,170 @@ public class LuceneBackendStoreTest {
 	}
 
 	@Test
+	public void existsByPatient_findsOnDiskTypeFromPriorSession() throws IOException {
+		// Same regression class as wildcardSearchHitsOnDiskTypesFromPriorSessions: the prior fix
+		// only patched resolveResourceTypes, but existsByPatient ran the same short-circuit and
+		// would return false for a patient whose only documents lived in an index inherited from
+		// a prior JVM. Concrete failure: chartsearchai's lazy-projection probe skips reconciling
+		// patients whose data is "invisible" to existsByPatient.
+		backend.upsert(doc("obs", "patient-A", "prior session obs", null));
+		backend.close();
+
+		LuceneBackendStore secondSession = new LuceneBackendStore(indexRoot);
+		try {
+			secondSession.ensureSchema("condition", SchemaSpec.builder(8).build());
+			// Note: no upsert on patient-A in this session — the obs hit must come from disk only.
+			assertTrue("patient-A's on-disk obs index must be visible to existsByPatient",
+			        secondSession.existsByPatient("patient-A"));
+		}
+		finally {
+			secondSession.close();
+			backend = new LuceneBackendStore(indexRoot);
+		}
+	}
+
+	@Test
+	public void bulkDeleteByPatient_purgesOnDiskTypeFromPriorSession() throws IOException {
+		// Same regression class. Concrete failure: a patient-purge run via bulkDeleteByPatient
+		// silently leaves PHI in any index inherited from a prior JVM whose writer hasn't been
+		// opened this session — every type with no current-session activity stays unpurged.
+		//
+		// NOTE: bulkDeleteByPatient has no production AOP trigger today — PatientIndexingAdvice
+		// only issues a single-row delete on patient purge. This test pins the SPI contract for
+		// any future caller (REST endpoint, admin script, broadened PatientIndexingAdvice) so
+		// they inherit the cross-session fix without rediscovering the bug.
+		backend.upsert(doc("obs", "patient-A", "prior session obs", null));
+		backend.close();
+
+		LuceneBackendStore secondSession = new LuceneBackendStore(indexRoot);
+		try {
+			secondSession.ensureSchema("condition", SchemaSpec.builder(8).build());
+			BulkWriteResult result = secondSession.bulkDeleteByPatient("patient-A");
+			assertEquals("must attempt the on-disk obs document",
+			        1, result.getTotalRequested());
+			assertEquals("must delete the on-disk obs document",
+			        1, result.getSucceeded());
+			assertFalse("patient-A must be gone from all indexes after the purge",
+			        secondSession.existsByPatient("patient-A"));
+		}
+		finally {
+			secondSession.close();
+			backend = new LuceneBackendStore(indexRoot);
+		}
+	}
+
+	@Test
+	public void wildcardSearchSurvivesPerDirectoryWriterOpenFailure() throws IOException {
+		// Phase 2 Pass 3 found that wildcard enumeration now primes writers for every on-disk
+		// directory; previously, only ensureWriter(resourceType) opened a writer, so a stale
+		// write.lock on one directory only failed type-specific reads. After the cross-session
+		// merge, an openWriter failure inside listAllIndexes would take down EVERY cross-type
+		// read (bulkDeleteByPatient, existsByPatient, bm25/knn). Pin: per-directory openWriter
+		// failure must be swallowed with a WARN, the bad index skipped, and enumeration continues
+		// so a single bad dir doesn't cause a global cross-type read outage.
+		backend.upsert(doc("obs", "patient-A", "valid obs", null));
+		backend.upsert(doc("condition", "patient-A", "valid condition", null));
+		backend.close();
+
+		// Hold an exclusive writer on querystore_condition via a SECOND backend pointing at the
+		// same root; a THIRD backend's listAllIndexes() will then fail to open the condition
+		// directory (lock held) but should still succeed on obs and complete the enumeration.
+		LuceneBackendStore lockHolder = new LuceneBackendStore(indexRoot);
+		try {
+			lockHolder.ensureSchema("condition", SchemaSpec.builder(8).build());
+			lockHolder.upsert(doc("condition", "patient-A", "lock-holder condition", null));
+
+			LuceneBackendStore probe = new LuceneBackendStore(indexRoot);
+			try {
+				// Must NOT throw — the per-directory swallow must keep enumeration alive.
+				SearchResult result = probe.bm25(SearchRequest.builder()
+				        .resourceTypes(Collections.emptyList())
+				        .queryText("valid")
+				        .filter(Filter.patientScope("patient-A"))
+				        .limit(10).build());
+				Set<String> hitTypes = new HashSet<>();
+				for (org.openmrs.module.querystore.backend.Hit h : result.getHits()) {
+					hitTypes.add(h.getDocument().getResourceType());
+				}
+				assertTrue("obs must still be reachable when condition's writer can't be opened",
+				        hitTypes.contains("obs"));
+				// condition may or may not be present (depends on whether the second backend's
+				// commit had reached the on-disk segment) — the contract here is "obs is still
+				// reachable," not "exactly one type returns."
+			}
+			finally {
+				probe.close();
+			}
+		}
+		finally {
+			lockHolder.close();
+			backend = new LuceneBackendStore(indexRoot); // restore for @After cleanup
+		}
+	}
+
+	@Test
+	public void wildcardSearchSkipsOnDiskDirectoriesWithInvalidResourceTypeNames() throws IOException {
+		// Stale-directory regression guard. The pre-existing cache-only short-circuit hid any
+		// querystore_* directory whose stripped name didn't match the resource-type regex (e.g.
+		// LegacyObs from a v0.9 release with mixed-case identifiers, or a manually-renamed dir).
+		// After the cross-session fix, every querystore_* directory is candidate for inclusion in
+		// wildcard reads — but consumers downstream (chartsearchai's QueryStoreChartBuilder)
+		// expect resource-type names from the registered ResourceTypeProvider set. The schema
+		// manager must filter stale directories out so they don't bleed into search results.
+		backend.upsert(doc("obs", "patient-A", "valid obs", null));
+		// Plant a stale directory with an invalid name (uppercase fails the [a-z][a-z0-9_]* regex).
+		java.nio.file.Files.createDirectories(indexRoot.resolve(
+		        org.openmrs.module.querystore.QueryStoreConstants.INDEX_PREFIX + "LegacyObs"));
+
+		SearchResult result = backend.bm25(SearchRequest.builder()
+		        .resourceTypes(Collections.emptyList())
+		        .queryText("valid")
+		        .filter(Filter.patientScope("patient-A"))
+		        .limit(10).build());
+
+		Set<String> hitTypes = new HashSet<>();
+		for (org.openmrs.module.querystore.backend.Hit h : result.getHits()) {
+			hitTypes.add(h.getDocument().getResourceType());
+		}
+		assertEquals("wildcard must exclude the LegacyObs stray directory",
+		        Collections.singleton("obs"), hitTypes);
+	}
+
+	@Test
+	public void wildcardSearchHitsOnDiskTypesFromPriorSessions() throws IOException {
+		// Regression guard: a previous JVM indexed obs (bootstrap completed), the current JVM has
+		// only touched condition (e.g. via AOP). resolveResourceTypes used to short-circuit on the
+		// first non-empty knownIndexNames() → wildcard search saw only condition, and the obs index
+		// on disk was silently invisible. This is exactly the symptom that hid Betty's 6
+		// appointment hits behind a single bill hit after the bridge UserContext fix landed.
+		backend.upsert(doc("obs", "patient-A", "prior session obs", null));
+		backend.close();
+
+		LuceneBackendStore secondSession = new LuceneBackendStore(indexRoot);
+		try {
+			secondSession.ensureSchema("condition", SchemaSpec.builder(8).build());
+			secondSession.upsert(doc("condition", "patient-A", "current session condition", null));
+
+			SearchResult result = secondSession.bm25(SearchRequest.builder()
+			        .resourceTypes(Collections.emptyList())
+			        .queryText("session")
+			        .filter(Filter.patientScope("patient-A"))
+			        .limit(10).build());
+
+			Set<String> hitTypes = new HashSet<>();
+			for (org.openmrs.module.querystore.backend.Hit h : result.getHits()) {
+				hitTypes.add(h.getDocument().getResourceType());
+			}
+			assertEquals("wildcard must include on-disk types not yet opened this session",
+			        new HashSet<>(Arrays.asList("obs", "condition")), hitTypes);
+		}
+		finally {
+			secondSession.close();
+			backend = new LuceneBackendStore(indexRoot); // restore for @After cleanup
+		}
+	}
+
+	@Test
 	public void termFilterOnRecordDateMatchesIndexedPoint() {
 		// TERM/IN on record_date must hit the LongPoint, not a non-existent indexed string field.
 		// Without the special-case in the filter translator this returns zero hits — silently

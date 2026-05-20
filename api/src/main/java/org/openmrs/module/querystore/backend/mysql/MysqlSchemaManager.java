@@ -18,8 +18,9 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Pattern;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.openmrs.api.db.hibernate.DbSessionFactory;
 import org.openmrs.module.querystore.QueryStoreConstants;
 import org.openmrs.module.querystore.backend.JdbcSupport;
@@ -32,9 +33,7 @@ import org.openmrs.module.querystore.backend.JdbcSupport;
  */
 final class MysqlSchemaManager {
 
-	// Resource-type names are validated on every upsert / search path; precompile so the hot path
-	// doesn't recompile the same regex per call.
-	private static final Pattern RESOURCE_TYPE_PATTERN = Pattern.compile("[a-z][a-z0-9_]*");
+	private static final Log log = LogFactory.getLog(MysqlSchemaManager.class);
 
 	// Bookkeeping tables that match the `querystore_%` metadata probe but aren't per-type document
 	// indices (no resource_uuid / patient_uuid columns). Excluded from listAllTables() so wildcard
@@ -43,9 +42,30 @@ final class MysqlSchemaManager {
 
 	private final DbSessionFactory sessionFactory;
 
-	// v1 single-JVM assumption: `knownTables` reflects DDL issued by this JVM. A sibling node
-	// creating a table elsewhere is invisible until `listAllTables()` is called explicitly.
+	// v1 single-JVM assumption: `knownTables` reflects DDL issued by this JVM, plus any tables
+	// discovered by `listAllTables()` probes. Grow-only across the JVM's lifetime: a sibling node
+	// that drops a previously-discovered table is invisible here until restart. The set staying
+	// "too large" is benign — a subsequent bulk operation against the dropped table fails its
+	// per-table catch, logs a `DocFailure`, and continues. Do NOT add cleanup that removes
+	// sibling-dropped entries: that would reintroduce the discovery-vs-drop race the v1 contract
+	// deliberately accepts.
 	private final Set<String> knownTables = ConcurrentHashMap.newKeySet();
+
+	// Memoized result of the INFORMATION_SCHEMA probe done by listAllTables(). The probe is hit
+	// on every cross-type wildcard read (search, bulkDelete, exists) and produced a real JDBC
+	// round-trip per call before this cache landed — 3x per chartsearchai patient search.
+	// Cleared whenever this JVM mutates the table set (ensureTable creates a new one, dropTable
+	// removes one), so steady-state reads serve from cache while local DDL stays consistent.
+	// Cross-JVM staleness: a sibling node creating or dropping a table is invisible to this cache
+	// until this JVM next runs its own DDL or restarts — accepted by the v1 single-JVM contract.
+	// Hit-path callers receive the cached snapshot wrapped in {@link Collections#unmodifiableSet}
+	// so a future caller can't silently corrupt the cache by mutating the returned set.
+	private volatile Set<String> cachedAllTables;
+
+	// One-shot dedup for "skipped stale name" WARN logs. Without this, every wildcard read on a
+	// JVM with an upgrade-era stale directory would emit the same warning — log spam. With it,
+	// the operator sees each artefact name exactly once per JVM lifetime.
+	private final Set<String> warnedStaleNames = ConcurrentHashMap.newKeySet();
 
 	MysqlSchemaManager(DbSessionFactory sessionFactory) {
 		this.sessionFactory = sessionFactory;
@@ -64,6 +84,7 @@ final class MysqlSchemaManager {
 				}
 			});
 			knownTables.add(table);
+			cachedAllTables = null;
 		}
 		catch (RuntimeException e) {
 			throw new IllegalStateException("Could not ensure schema for " + table, e);
@@ -79,6 +100,7 @@ final class MysqlSchemaManager {
 				}
 			});
 			knownTables.remove(table);
+			cachedAllTables = null;
 		}
 		catch (RuntimeException e) {
 			throw new IllegalStateException("Could not drop " + table, e);
@@ -98,8 +120,18 @@ final class MysqlSchemaManager {
 	 * Returns the names of every {@code querystore_*} table currently in the database. Used by
 	 * cross-table operations like {@link MysqlBackendStore#bulkDeleteByPatient(String)} where the
 	 * caller does not know which types contain documents for a given patient.
+	 *
+	 * <p>Results are memoized for the JVM lifetime; the cache is invalidated whenever this JVM
+	 * mutates the table set via {@link #ensureTable(String)} or {@link #dropTable(String)}.
+	 * Names that don't match {@link QueryStoreConstants#RESOURCE_TYPE_PATTERN} (e.g. stale {@code querystore_LegacyObs}
+	 * leftover from a previous version with mixed-case identifiers) are filtered out so they
+	 * don't bleed into wildcard search results — the same regex that gates writes gates reads.
 	 */
 	Set<String> listAllTables() {
+		Set<String> cached = cachedAllTables;
+		if (cached != null) {
+			return cached;
+		}
 		Set<String> tables = new HashSet<>();
 		try {
 			JdbcSupport.inTransaction(sessionFactory, conn -> {
@@ -108,9 +140,20 @@ final class MysqlSchemaManager {
 				    new String[] { "TABLE" })) {
 					while (rs.next()) {
 						String name = rs.getString("TABLE_NAME").toLowerCase();
-						if (!STATE_TABLES.contains(name)) {
-							tables.add(name);
+						if (STATE_TABLES.contains(name)) {
+							continue;
 						}
+						String resourceType = name.substring(QueryStoreConstants.INDEX_PREFIX.length());
+						if (!QueryStoreConstants.RESOURCE_TYPE_PATTERN.matcher(resourceType).matches()) {
+							if (warnedStaleNames.add(name)) {
+								log.warn("Ignoring querystore table '" + name + "' — resource-type '"
+								        + resourceType + "' does not match " + QueryStoreConstants.RESOURCE_TYPE_REGEX
+								        + " (likely leftover from a prior version or a manual rename;"
+								        + " drop the table to silence this warning).");
+							}
+							continue;
+						}
+						tables.add(name);
 					}
 				}
 			});
@@ -119,12 +162,15 @@ final class MysqlSchemaManager {
 			throw new IllegalStateException("Could not enumerate querystore tables", e);
 		}
 		knownTables.addAll(tables);
-		return tables;
+		Set<String> snapshot = Collections.unmodifiableSet(tables);
+		cachedAllTables = snapshot;
+		return snapshot;
 	}
 
 	static String tableName(String resourceType) {
-		if (resourceType == null || !RESOURCE_TYPE_PATTERN.matcher(resourceType).matches()) {
-			throw new IllegalArgumentException("Invalid resource type (must match [a-z][a-z0-9_]*): " + resourceType);
+		if (resourceType == null || !QueryStoreConstants.RESOURCE_TYPE_PATTERN.matcher(resourceType).matches()) {
+			throw new IllegalArgumentException("Invalid resource type (must match "
+			        + QueryStoreConstants.RESOURCE_TYPE_REGEX + "): " + resourceType);
 		}
 		return QueryStoreConstants.INDEX_PREFIX + resourceType;
 	}

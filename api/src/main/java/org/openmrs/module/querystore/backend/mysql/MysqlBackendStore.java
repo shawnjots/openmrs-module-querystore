@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -191,7 +192,7 @@ public class MysqlBackendStore implements BackendStore {
 
 	@Override
 	public BulkWriteResult bulkDeleteByPatient(String patientUuid) {
-		Set<String> tables = schemaManager.listAllTables();
+		Set<String> tables = allTables();
 		List<DocFailure> failures = new ArrayList<>();
 		int totalDeleted = 0;
 		// Per-table transactions so a deadlock victim on one table (rolling back the whole
@@ -224,13 +225,7 @@ public class MysqlBackendStore implements BackendStore {
 		if (StringUtils.isBlank(patientUuid)) {
 			return false;
 		}
-		// Hot path on every searchByPatient: prefer the cache populated by ensureTable. A cold JVM
-		// (no schema work yet) falls back to the metadata probe. Mirrors resolveTables — same
-		// staleness trade-off, same fallback.
-		Set<String> tables = schemaManager.getKnownTables();
-		if (tables.isEmpty()) {
-			tables = schemaManager.listAllTables();
-		}
+		Set<String> tables = allTables();
 		if (tables.isEmpty()) {
 			return false;
 		}
@@ -426,18 +421,27 @@ public class MysqlBackendStore implements BackendStore {
 
 	private List<String> resolveTables(SearchRequest req) {
 		if (req.getResourceTypes().isEmpty()) {
-			// Wildcard read: prefer the cache populated by ensureTable / prior enumeration. A cold
-			// JVM (no schema work yet) falls back to the metadata probe and seeds the cache. Stale
-			// vs. another JVM's writes is acceptable on the read path — unknown types just return
-			// zero hits.
-			Set<String> cached = schemaManager.getKnownTables();
-			return new ArrayList<>(cached.isEmpty() ? schemaManager.listAllTables() : cached);
+			return new ArrayList<>(allTables());
 		}
 		List<String> tables = new ArrayList<>(req.getResourceTypes().size());
 		for (String type : req.getResourceTypes()) {
 			schemaManager.ensureTable(type);
 			tables.add(MysqlSchemaManager.tableName(type));
 		}
+		return tables;
+	}
+
+	/**
+	 * Cross-table enumerator used by every wildcard read path (search, bulk delete, exists probe).
+	 * Always merges the metadata-probe listing with the in-memory cache. The pre-existing
+	 * "if known is empty, listAllTables" short-circuit silently dropped any table inherited from a
+	 * prior JVM as soon as another table had been touched this session — the same hidden-on-disk
+	 * regression the lucene backend fixed for index directories. Stale vs. another JVM's writes is
+	 * acceptable on the read path; unknown tables just return zero hits.
+	 */
+	private Set<String> allTables() {
+		Set<String> tables = new HashSet<>(schemaManager.listAllTables());
+		tables.addAll(schemaManager.getKnownTables());
 		return tables;
 	}
 

@@ -9,11 +9,31 @@
  */
 package org.openmrs.module.querystore;
 
+import java.util.regex.Pattern;
+
 public final class QueryStoreConstants {
 
 	public static final String MODULE_ID = "querystore";
 
 	public static final String INDEX_PREFIX = "querystore_";
+
+	/**
+	 * Storage-layer resource-type identifier regex. Per Decision 4 every per-type store is named
+	 * {@code querystore_<type>}; this is the {@code <type>} half. Lowercase plus underscore so the
+	 * identifier survives the case-insensitive identifier collation MySQL and Lucene apply on
+	 * directory names. Tighter than {@code ResourceTypeNames.PROVIDED_PATTERN}, which validates
+	 * provider-supplied {@code moduleid_type} names — this constant is the storage layer's
+	 * "what makes a valid {@code querystore_*} suffix" gate.
+	 *
+	 * <p>Lives here, alongside {@link #INDEX_PREFIX}, so the three schema managers (Lucene, MySQL,
+	 * Elasticsearch) and the stale-directory filters in their {@code listAll*} methods share one
+	 * source of truth. A drift between any two copies would let non-conforming directory/table
+	 * names leak through one path while being rejected by another — the exact regression the
+	 * Pass-2 stale-directory filter is supposed to prevent.
+	 */
+	public static final String RESOURCE_TYPE_REGEX = "[a-z][a-z0-9_]*";
+
+	public static final Pattern RESOURCE_TYPE_PATTERN = Pattern.compile(RESOURCE_TYPE_REGEX);
 
 	public static final String FIELD_PATIENT_UUID = "patient_uuid";
 
