@@ -16,6 +16,8 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -26,6 +28,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.openmrs.module.querystore.QueryStoreConstants;
 import org.openmrs.module.querystore.api.QueryStoreService;
 import org.openmrs.module.querystore.embedding.OnnxEmbeddingProvider;
 import org.openmrs.module.querystore.model.QueryDocument;
@@ -140,8 +143,62 @@ public abstract class AbstractRetrievalQualityEvalTest {
 		// String index → reliable mapping back to expectedRecordIndices on the query path.
 		doc.setResourceUuid(Integer.toString(index));
 		doc.setText(text);
-		doc.setEmbedding(provider.embed(text));
+		List<String> synonyms = synonymsForText(text);
+		if (!synonyms.isEmpty()) {
+			doc.putMetadata(QueryStoreConstants.FIELD_SYNONYMS, synonyms);
+		}
+		// Order matters: synonyms must be on the document before this line, because
+		// getEmbeddingInput() reads the synonyms metadata and appends it to the embed input.
+		// Mirrors the production write path in BridgeIndexer / TypeBootstrapper — reorder and the
+		// embedding silently drops the synonym signal without throwing.
+		doc.setEmbedding(provider.embed(doc.getEmbeddingInput()));
 		return doc;
+	}
+
+	/**
+	 * Small medical-abbreviation synonyms map approximating what {@code ConceptNameUtil.getSynonyms}
+	 * would return against the CIEL dictionary on a real deployment. The eval dataset's records carry
+	 * only the preferred name (e.g., "Respiratory Rate") in their text; without a synonyms list, the
+	 * BM25-on-synonyms wiring per ADR Decision 6 has nothing to index and the embedding has to bridge
+	 * the abbreviation on its own. Keyed by case-sensitive substring of the record text — the eval
+	 * dataset uses canonical capitalisation throughout.
+	 *
+	 * <p>This is a retrieval-quality test, not a serializer regression test: the lookup deliberately
+	 * bypasses {@code ConceptNameUtil} (locale filtering, {@code MAX_SYNONYMS=3} cap, dedupe rules).
+	 * A future regression in {@code ConceptNameUtil} would not be caught here; the serializer tests
+	 * are the right home for that.
+	 *
+	 * <p>Insertion order is load-bearing: specific keys precede generic ones so
+	 * {@code Diastolic Blood Pressure} matches before any hypothetical bare {@code Blood Pressure}
+	 * entry would, and {@code Pulse} comes last so it cannot pre-empt a future longer "Pulse ..."
+	 * concept name added above it.
+	 */
+	private static final Map<String, List<String>> SYNONYMS = synonymsMap();
+
+	private static Map<String, List<String>> synonymsMap() {
+		Map<String, List<String>> m = new LinkedHashMap<>();
+		m.put("Respiratory Rate", Collections.singletonList("RR"));
+		m.put("Systolic Blood Pressure", Arrays.asList("SBP", "BP"));
+		m.put("Diastolic Blood Pressure", Arrays.asList("DBP", "BP"));
+		m.put("Blood Oxygen Saturation", Arrays.asList("SpO2", "O2 sat"));
+		m.put("Temperature (C)", Collections.singletonList("Temp"));
+		m.put("CD4 Count", Collections.singletonList("CD4"));
+		m.put("Weight (kg)", Collections.singletonList("Wt"));
+		m.put("Height (cm)", Collections.singletonList("Ht"));
+		m.put("Pulse", Arrays.asList("HR", "Heart Rate", "Pulse Rate"));
+		return m;
+	}
+
+	protected static List<String> synonymsForText(String text) {
+		if (text == null) {
+			return Collections.emptyList();
+		}
+		for (Map.Entry<String, List<String>> e : SYNONYMS.entrySet()) {
+			if (text.contains(e.getKey())) {
+				return e.getValue();
+			}
+		}
+		return Collections.emptyList();
 	}
 
 	/**
