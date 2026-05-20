@@ -32,6 +32,15 @@ final class ElasticsearchFieldNames {
 
 	static final String TEXT = "text";
 
+	/**
+	 * BM25-indexed companion of the {@code synonyms} metadata list per ADR Decision 6's
+	 * Synonyms-and-group-obs convention. Stored as a top-level text field so the BM25 query can
+	 * multi_match against {@code [text, synonyms]}; the structured list is also kept in
+	 * {@link #METADATA_JSON} for rehydration. Duplication is intentional — the text field exists
+	 * purely so BM25 has something to index.
+	 */
+	static final String SYNONYMS = QueryStoreConstants.FIELD_SYNONYMS;
+
 	static final String EMBEDDING = "embedding";
 
 	static final String METADATA_JSON = "metadata_json";

@@ -91,11 +91,21 @@ public interface BackendStore {
 	SearchResult knn(SearchRequest req);
 
 	/**
-	 * Hybrid search. Default behavior across all tiers is BM25 + kNN with rank-based RRF fusion
-	 * applied at the service layer (see {@code QueryStoreServiceImpl}); the ES backend is
-	 * permitted to override with native RRF when measurable benefit justifies the divergence.
+	 * Hybrid search. The default fuses {@link #bm25(SearchRequest)} and {@link #knn(SearchRequest)}
+	 * via rank-based RRF (see {@link RankFusion}); the ES backend is permitted to override with
+	 * native RRF when measurable benefit justifies the divergence. Pure BM25 fallback runs and kNN
+	 * is silently skipped when EITHER the request carries no query vector OR the backend declares
+	 * {@code !capabilities().supportsKnn()} — a BM25-only contributed backend therefore does not
+	 * need to override {@code hybrid} or implement {@code knn}; it returns BM25 alone.
 	 */
-	SearchResult hybrid(SearchRequest req);
+	default SearchResult hybrid(SearchRequest req) {
+		SearchResult bm25 = bm25(req);
+		if (req.getQueryVector() == null || !capabilities().supportsKnn()) {
+			return bm25;
+		}
+		SearchResult knn = knn(req);
+		return RankFusion.rrf(bm25, knn, req.getLimit());
+	}
 
 	// ---------- introspection ----------
 

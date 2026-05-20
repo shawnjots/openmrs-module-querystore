@@ -34,7 +34,6 @@ import org.openmrs.module.querystore.backend.Filter;
 import org.openmrs.module.querystore.backend.SchemaSpec;
 import org.openmrs.module.querystore.backend.SearchRequest;
 import org.openmrs.module.querystore.backend.SearchResult;
-import org.openmrs.module.querystore.backend.UnsupportedBackendOperationException;
 import org.openmrs.module.querystore.model.QueryDocument;
 import org.testcontainers.elasticsearch.ElasticsearchContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -116,6 +115,24 @@ public class ElasticsearchBackendStoreIntegrationTest {
 		SearchResult result = backend.bm25(SearchRequest.builder().resourceType("obs").queryText("Hemoglobin")
 		        .filter(Filter.patientScope("patient-A")).limit(10).build());
 		assertEquals("upsert must not duplicate by resource_uuid", 1, result.getHits().size());
+	}
+
+	@Test
+	public void bm25_matchesOnSynonymsField() {
+		// ADR Decision 6: synonyms BM25-indexed as a top-level companion of text on ES so an
+		// alternate-term query surfaces docs whose stored text uses the preferred name. Without
+		// the synonyms field, "HTN" would not find this doc — its citation-clean text is
+		// "Hypertension".
+		QueryDocument doc = doc("condition", "patient-A", "Hypertension", null);
+		doc.putMetadata(org.openmrs.module.querystore.QueryStoreConstants.FIELD_SYNONYMS,
+		    Arrays.asList("HTN", "High blood pressure"));
+		assertTrue(backend.upsert(doc).isSucceeded());
+
+		SearchResult result = backend.bm25(SearchRequest.builder().resourceType("condition").queryText("HTN")
+		        .filter(Filter.patientScope("patient-A")).limit(10).build());
+
+		assertEquals(1, result.getHits().size());
+		assertEquals(doc.getResourceUuid(), result.getHits().get(0).getDocument().getResourceUuid());
 	}
 
 	@Test
@@ -402,21 +419,20 @@ public class ElasticsearchBackendStoreIntegrationTest {
 	}
 
 	@Test
-	public void hybridThrowsUnsupportedOperation() {
-		try {
-			backend.hybrid(SearchRequest.builder().queryText("anything").queryVector(new float[8]).limit(5).build());
-			fail("hybrid() should throw — service-layer RRF owns hybrid for v1");
-		}
-		catch (UnsupportedBackendOperationException expected) {
-			// expected
-		}
+	public void hybridFusesBm25AndKnnViaSpiDefault() {
+		// v1 ships the default-method shape: backend.hybrid() runs bm25 + knn + RRF on the JVM
+		// side. ES is permitted to override with native RRF when measurable benefit justifies it
+		// (Decision 3 SPI sub-point 2). Empty corpus + no matches → empty result, no throw.
+		SearchResult result = backend.hybrid(
+		    SearchRequest.builder().queryText("anything").queryVector(new float[8]).limit(5).build());
+		assertEquals(0, result.getHits().size());
 	}
 
 	@Test
 	public void capabilitiesReportElasticsearchTier() {
 		BackendCapabilities caps = backend.capabilities();
 		assertTrue(caps.supportsKnn());
-		assertFalse("v1 ships parity with Lucene/MySQL — service-layer RRF, no native RRF",
+		assertFalse("v1 ships parity with Lucene/MySQL — SPI-default RRF, no native RRF override",
 		    caps.supportsHybridNative());
 		assertTrue("ES is the only tier with cross-patient kNN at multi-million scale",
 		    caps.supportsCrossPatientKnnAtScale());

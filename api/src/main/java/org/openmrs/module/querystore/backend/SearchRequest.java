@@ -21,7 +21,9 @@ import java.util.List;
  *
  * <p>{@code queryText} is required for {@link BackendStore#bm25(SearchRequest)} and
  * {@link BackendStore#hybrid(SearchRequest)}; {@code queryVector} is required for
- * {@link BackendStore#knn(SearchRequest)} and {@link BackendStore#hybrid(SearchRequest)}.
+ * {@link BackendStore#knn(SearchRequest)}. {@code hybrid} degrades to BM25-only when
+ * {@code queryVector} is null (the service layer omits it when no embedding provider is wired),
+ * so it is optional rather than strictly required there.
  */
 public final class SearchRequest {
 

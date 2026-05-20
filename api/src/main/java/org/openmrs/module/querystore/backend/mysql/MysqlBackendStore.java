@@ -47,7 +47,6 @@ import org.openmrs.module.querystore.backend.SchemaSpec;
 import org.openmrs.module.querystore.backend.SearchRequest;
 import org.openmrs.module.querystore.backend.SearchResult;
 import org.openmrs.module.querystore.backend.TopKHits;
-import org.openmrs.module.querystore.backend.UnsupportedBackendOperationException;
 import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.model.QueryDocument;
 
@@ -287,12 +286,6 @@ public class MysqlBackendStore implements BackendStore {
 			knnSingleTable(table, req, heap);
 		}
 		return TopKHits.materialise(heap, req.getLimit());
-	}
-
-	@Override
-	public SearchResult hybrid(SearchRequest req) {
-		throw new UnsupportedBackendOperationException(
-		        "MySQL backend has no native hybrid query; service layer must fuse bm25() + knn() ranks");
 	}
 
 	@Override

@@ -150,6 +150,7 @@ final class ElasticsearchSchemaManager {
 		properties.put(ElasticsearchFieldNames.PATIENT_UUID, Property.of(p -> p.keyword(k -> k)));
 		properties.put(ElasticsearchFieldNames.RECORD_DATE, Property.of(p -> p.date(d -> d.format("yyyy-MM-dd"))));
 		properties.put(ElasticsearchFieldNames.TEXT, Property.of(p -> p.text(t -> t.analyzer("standard"))));
+		properties.put(ElasticsearchFieldNames.SYNONYMS, Property.of(p -> p.text(t -> t.analyzer("standard"))));
 		properties.put(ElasticsearchFieldNames.EMBEDDING, Property.of(p -> p.denseVector(v -> v
 		        .dims(embeddingDims)
 		        .index(true)

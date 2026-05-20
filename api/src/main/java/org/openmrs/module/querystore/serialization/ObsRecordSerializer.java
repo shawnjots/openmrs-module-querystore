@@ -18,6 +18,7 @@ import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_UNITS;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_BOOLEAN;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_CODED_NAME;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_CODED_UUID;
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_COMPLEX_HANDLER;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_COMPLEX_URI;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_DATETIME;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_DRUG_NAME;
@@ -28,6 +29,7 @@ import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_TEXT
 import java.time.LocalDate;
 
 import org.openmrs.Concept;
+import org.openmrs.ConceptComplex;
 import org.openmrs.ConceptDatatype;
 import org.openmrs.ConceptNumeric;
 import org.openmrs.Drug;
@@ -156,9 +158,32 @@ public class ObsRecordSerializer extends AbstractRecordSerializer<Obs> {
 		}
 		if (datatype != null && datatype.isComplex() && obs.getValueComplex() != null) {
 			doc.putMetadata(FIELD_VALUE_COMPLEX_URI, obs.getValueComplex());
+			String handler = resolveComplexHandler(obs.getConcept());
+			if (handler != null && !handler.isEmpty()) {
+				doc.putMetadata(FIELD_VALUE_COMPLEX_HANDLER, handler);
+			}
 			return "[complex value]";
 		}
 		return "";
+	}
+
+	/**
+	 * Resolves the registered {@link org.openmrs.obs.ComplexObsHandler} name for a complex-typed obs.
+	 * When the obs's concept is already a {@link ConceptComplex} instance (the common case under
+	 * Hibernate's joined-table inheritance), we read the handler directly. When Hibernate returned a
+	 * plain {@code Concept} proxy, we fall back to a typed service lookup — one extra query per
+	 * complex obs, which is acceptable because complex obs are sparse (images, PDFs, DICOM) relative
+	 * to numeric/coded obs.
+	 */
+	private String resolveComplexHandler(Concept concept) {
+		if (concept instanceof ConceptComplex) {
+			return ((ConceptComplex) concept).getHandler();
+		}
+		if (concept == null || concept.getConceptId() == null) {
+			return null;
+		}
+		ConceptComplex typed = Context.getConceptService().getConceptComplex(concept.getConceptId());
+		return typed == null ? null : typed.getHandler();
 	}
 
 	private void putObsMetaFields(QueryDocument doc, Obs obs) {

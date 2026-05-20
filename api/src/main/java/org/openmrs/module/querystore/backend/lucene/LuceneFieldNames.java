@@ -34,6 +34,16 @@ final class LuceneFieldNames {
 	static final String TEXT = "text";
 
 	/**
+	 * BM25-indexed companion of the {@code synonyms} metadata list per ADR Decision 6's
+	 * Synonyms-and-group-obs convention. Stored as a single space-joined TextField alongside
+	 * {@link #TEXT}; the query parser searches both fields so an "HTN" query hits a doc whose
+	 * preferred name is "Hypertension". The structured list also lives in {@link #METADATA_JSON}
+	 * for rehydration; the duplication is intentional — the text field exists purely so BM25 has
+	 * something to index.
+	 */
+	static final String SYNONYMS = QueryStoreConstants.FIELD_SYNONYMS;
+
+	/**
 	 * Stored byte blob carrying the raw float32 embedding. Doubles as the source the brute-force
 	 * kNN scan iterates over — Lucene 8 ships no native HNSW kNN field, and the tier is pinned
 	 * to 8.11.2 to match core's transitive Lucene (see {@code LuceneBackendStore} class javadoc).

@@ -41,6 +41,7 @@ import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.queryparser.classic.MultiFieldQueryParser;
 import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.BooleanClause;
@@ -68,7 +69,6 @@ import org.openmrs.module.querystore.backend.SchemaSpec;
 import org.openmrs.module.querystore.backend.SearchRequest;
 import org.openmrs.module.querystore.backend.SearchResult;
 import org.openmrs.module.querystore.backend.TopKHits;
-import org.openmrs.module.querystore.backend.UnsupportedBackendOperationException;
 import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.model.QueryDocument;
 import org.openmrs.util.OpenmrsUtil;
@@ -82,8 +82,9 @@ import org.openmrs.util.OpenmrsUtil;
  * native HNSW kNN, so the kNN scan trades native HNSW for capability parity with the MySQL tier
  * (sub-linear when a patient filter narrows the candidate set; O(N) on un-filtered cross-patient
  * queries — the same ceiling the tier already advertised as "single-host, bounded by one JVM").
- * Single-host, no replication; index loss requires rebuild from core. Hybrid fusion stays at the
- * service layer per Decision 3's "uniformity is the default" principle.
+ * Single-host, no replication; index loss requires rebuild from core. Hybrid fusion is inherited
+ * from the {@link BackendStore#hybrid(SearchRequest)} interface default (rank-based RRF) per
+ * Decision 3's "uniformity is the default" principle — no Lucene-specific override.
  */
 public class LuceneBackendStore implements BackendStore, Closeable {
 
@@ -345,12 +346,6 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 	}
 
 	@Override
-	public SearchResult hybrid(SearchRequest req) {
-		throw new UnsupportedBackendOperationException(
-		        "Lucene backend has no native hybrid query; service layer must fuse bm25() + knn() ranks");
-	}
-
-	@Override
 	public BackendCapabilities capabilities() {
 		return new BackendCapabilities(
 		        true,
@@ -478,6 +473,12 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 			target.add(new TextField(LuceneFieldNames.TEXT, source.getText(), Field.Store.YES));
 		}
 
+		String synonymsBlob = source.getSynonymsText();
+		if (!synonymsBlob.isEmpty()) {
+			// Not stored — read path rehydrates synonyms from metadata_json.
+			target.add(new TextField(LuceneFieldNames.SYNONYMS, synonymsBlob, Field.Store.NO));
+		}
+
 		if (source.getEmbedding() != null) {
 			target.add(new StoredField(LuceneFieldNames.EMBEDDING_STORED,
 			        LuceneVectorCodec.encode(source.getEmbedding())));
@@ -535,9 +536,12 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 	}
 
 	private Query buildBm25Query(String queryText, Query filterQuery) throws ParseException {
-		QueryParser parser = new QueryParser(LuceneFieldNames.TEXT, analyzer);
+		QueryParser parser = new MultiFieldQueryParser(
+		        new String[] { LuceneFieldNames.TEXT, LuceneFieldNames.SYNONYMS }, analyzer);
 		// Bypass the parser's special-character handling — clinical text from the consumer side
-		// is treated as a natural-language phrase, not a Lucene DSL expression.
+		// is treated as a natural-language phrase, not a Lucene DSL expression. The MultiField
+		// parser ORs matches across {@code text} and {@code synonyms} so an alternate-term query
+		// surfaces docs whose preferred name uses the canonical term per ADR Decision 6.
 		Query textQuery = parser.parse(QueryParser.escape(queryText));
 		if (filterQuery == null) {
 			return textQuery;

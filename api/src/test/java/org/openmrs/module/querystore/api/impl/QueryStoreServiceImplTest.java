@@ -14,6 +14,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -22,6 +23,7 @@ import org.junit.Test;
 import org.openmrs.module.querystore.api.QueryStoreService;
 import org.openmrs.module.querystore.backend.BackendCapabilities;
 import org.openmrs.module.querystore.backend.BackendStore;
+import org.openmrs.module.querystore.backend.Filter;
 import org.openmrs.module.querystore.backend.BulkWriteResult;
 import org.openmrs.module.querystore.backend.HealthStatus;
 import org.openmrs.module.querystore.backend.SchemaSpec;
@@ -77,6 +79,24 @@ public class QueryStoreServiceImplTest {
 	}
 
 	@Test
+	public void searchByPatient_hotPatient_delegatesToBackendHybridNotBm25KnnSeparately() {
+		// Locks in the Decision 3 SPI reshape: the service calls backend.hybrid() (which fuses
+		// internally via the interface-default RankFusion path or a native override) rather than
+		// fusing bm25 + knn results in the service layer. A revert that fuses externally would
+		// silently produce the same empty result on this stub but fail this assertion.
+		FakeBackendStore backend = new FakeBackendStore(true);
+		RecordingBootstrapService bootstrap = new RecordingBootstrapService();
+		service.setBackend(backend);
+		service.setBootstrapServiceOverride(bootstrap);
+
+		service.searchByPatient("patient-uuid", "glucose", 10);
+
+		assertEquals("service must delegate fusion to backend.hybrid()", 1, backend.hybridCount.get());
+		assertEquals("service must not call bm25() directly", 0, backend.bm25Count.get());
+		assertEquals("service must not call knn() directly", 0, backend.knnCount.get());
+	}
+
+	@Test
 	public void searchByPatient_hotPatient_skipsEnsureIndexed() {
 		FakeBackendStore backend = new FakeBackendStore(true);
 		RecordingBootstrapService bootstrap = new RecordingBootstrapService();
@@ -122,6 +142,9 @@ public class QueryStoreServiceImplTest {
 	private static final class FakeBackendStore implements BackendStore {
 		private final boolean existsByPatientReturn;
 		final AtomicInteger existsByPatientCount = new AtomicInteger();
+		final AtomicInteger hybridCount = new AtomicInteger();
+		final AtomicInteger bm25Count = new AtomicInteger();
+		final AtomicInteger knnCount = new AtomicInteger();
 
 		FakeBackendStore(boolean existsByPatientReturn) {
 			this.existsByPatientReturn = existsByPatientReturn;
@@ -139,10 +162,17 @@ public class QueryStoreServiceImplTest {
 		@Override public BulkWriteResult bulkUpsert(List<QueryDocument> docs) { return null; }
 		@Override public BulkWriteResult bulkDelete(String resourceType, List<String> uuids) { return null; }
 		@Override public BulkWriteResult bulkDeleteByPatient(String patientUuid) { return null; }
-		@Override public SearchResult bm25(SearchRequest req) { return SearchResult.empty(); }
-		@Override public SearchResult knn(SearchRequest req) { return SearchResult.empty(); }
-		@Override public SearchResult hybrid(SearchRequest req) { return SearchResult.empty(); }
-		@Override public BackendCapabilities capabilities() { return null; }
+		@Override public SearchResult bm25(SearchRequest req) { bm25Count.incrementAndGet(); return SearchResult.empty(); }
+		@Override public SearchResult knn(SearchRequest req) { knnCount.incrementAndGet(); return SearchResult.empty(); }
+		@Override public SearchResult hybrid(SearchRequest req) { hybridCount.incrementAndGet(); return SearchResult.empty(); }
+		// Non-null capabilities even though this fake currently overrides hybrid(): the
+		// BackendStore.hybrid default-method (post-Decision-3 SPI reshape) dereferences
+		// capabilities().supportsKnn(), so a future test that forgets to override hybrid()
+		// — or inherits this fake — would NPE on the default path if capabilities() returned
+		// null. Returning a real object here keeps the fake safe under that drift.
+		@Override public BackendCapabilities capabilities() {
+			return new BackendCapabilities(true, false, false, 1_000_000, EnumSet.allOf(Filter.Kind.class));
+		}
 		@Override public HealthStatus health() { return null; }
 	}
 

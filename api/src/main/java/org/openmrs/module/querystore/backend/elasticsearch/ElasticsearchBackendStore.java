@@ -36,7 +36,6 @@ import org.openmrs.module.querystore.backend.MetadataCodec;
 import org.openmrs.module.querystore.backend.SchemaSpec;
 import org.openmrs.module.querystore.backend.SearchRequest;
 import org.openmrs.module.querystore.backend.SearchResult;
-import org.openmrs.module.querystore.backend.UnsupportedBackendOperationException;
 import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.model.QueryDocument;
 
@@ -65,9 +64,12 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
  * write; the conditional-upsert-by-version invariant is enforced via external versioning
  * ({@code version_type=external_gte} with {@code last_modified} as the version).
  *
- * <p>Hybrid retrieval intentionally throws — service-layer RRF fuses {@link #bm25(SearchRequest)}
- * and {@link #knn(SearchRequest)} the same way every tier does, which keeps the chartsearchai
- * cross-tier eval a fair signal. Native ES RRF via the {@code retriever} API is a known follow-up.
+ * <p>Hybrid retrieval inherits the {@link BackendStore#hybrid(SearchRequest)} interface-default
+ * RRF over {@link #bm25(SearchRequest)} and {@link #knn(SearchRequest)} the same way every tier
+ * does, which keeps the chartsearchai cross-tier eval a fair signal. Native ES RRF via the
+ * {@code retriever} API is a known follow-up; the override hook is reachable because the SPI
+ * default is now a real call path (was an {@code UnsupportedBackendOperationException} throw in
+ * v1's pre-reshape shape — see Decision 3 SPI sub-point 2).
  */
 public class ElasticsearchBackendStore implements BackendStore, Closeable {
 
@@ -273,7 +275,11 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 		}
 		List<String> indexes = resolveIndexes(req);
 		Query filter = ElasticsearchFilterTranslator.toQuery(req.getFilters());
-		Query bm25 = Query.of(q -> q.match(m -> m.field(ElasticsearchFieldNames.TEXT).query(req.getQueryText())));
+		// multi_match OR-fans across [text, synonyms] so an alternate-term query surfaces docs
+		// whose preferred name uses the canonical term per ADR Decision 6.
+		Query bm25 = Query.of(q -> q.multiMatch(m -> m
+		        .fields(ElasticsearchFieldNames.TEXT, ElasticsearchFieldNames.SYNONYMS)
+		        .query(req.getQueryText())));
 		Query combined = filter == null ? bm25
 		        : Query.of(q -> q.bool(b -> b.must(bm25).filter(filter)));
 		return runSearch(req, indexes, sb -> sb.query(combined), null);
@@ -299,12 +305,6 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 			return k;
 		});
 		return runSearch(req, indexes, sb -> sb, knn);
-	}
-
-	@Override
-	public SearchResult hybrid(SearchRequest req) {
-		throw new UnsupportedBackendOperationException(
-		        "Elasticsearch backend does not implement native hybrid in v1; service layer must fuse bm25() + knn() ranks");
 	}
 
 	@Override
@@ -450,6 +450,13 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 		}
 		if (doc.getText() != null) {
 			source.put(ElasticsearchFieldNames.TEXT, doc.getText());
+		}
+		Object synonyms = doc.getMetadata().get(QueryStoreConstants.FIELD_SYNONYMS);
+		if (synonyms instanceof List) {
+			// Top-level text field used by BM25's multi_match per ADR Decision 6; the same list
+			// also lives in metadata_json for rehydration. Duplication is intentional — this
+			// field exists purely so BM25 can match.
+			source.put(ElasticsearchFieldNames.SYNONYMS, synonyms);
 		}
 		if (doc.getEmbedding() != null) {
 			// Jackson serializes float[] directly as a JSON number array (no per-element boxing).

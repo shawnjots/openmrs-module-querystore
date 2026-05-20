@@ -29,6 +29,7 @@ import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
 import org.openmrs.Concept;
+import org.openmrs.ConceptComplex;
 import org.openmrs.ConceptClass;
 import org.openmrs.ConceptDatatype;
 import org.openmrs.ConceptNumeric;
@@ -232,11 +233,14 @@ public class ObsRecordSerializerTest {
 	}
 
 	@Test
-	public void serialize_complexObs_populatesUriAndPlaceholderText() {
-		Concept concept = concept("Chest X-Ray");
+	public void serialize_complexObs_populatesUriHandlerAndPlaceholderText() {
+		ConceptComplex concept = new ConceptComplex();
+		concept.setUuid("concept-xray");
+		concept.addName(preferredName("Chest X-Ray"));
 		ConceptDatatype complex = new ConceptDatatype();
 		complex.setUuid(ConceptDatatype.COMPLEX_UUID);
 		concept.setDatatype(complex);
+		concept.setHandler("ImageHandler");
 
 		Obs obs = obs(concept);
 		obs.setValueComplex("xray-handler|/storage/xray/123.png");
@@ -247,6 +251,7 @@ public class ObsRecordSerializerTest {
 		assertTrue("text should mark complex value", doc.getText().contains("[complex value]"));
 		assertEquals("xray-handler|/storage/xray/123.png",
 				doc.getMetadata().get("value_complex_uri"));
+		assertEquals("ImageHandler", doc.getMetadata().get("value_complex_handler"));
 	}
 
 	@Test

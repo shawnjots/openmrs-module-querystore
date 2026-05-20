@@ -28,10 +28,10 @@ import org.openmrs.module.querystore.embedding.EmbeddingProvider;
 import org.openmrs.module.querystore.model.QueryDocument;
 
 /**
- * Default {@link QueryStoreService}. Delegates writes to the configured {@link BackendStore} and
- * fuses BM25 + kNN ranks at the service layer using {@link ReciprocalRankFusion} (ADR Decision 3
- * SPI sub-point 2). The {@link EmbeddingProvider} dependency is optional: when null, search
- * degrades to BM25-only.
+ * Default {@link QueryStoreService}. Delegates writes and search to the configured
+ * {@link BackendStore}; hybrid fusion is the SPI's default-method responsibility (BM25 + kNN with
+ * rank-based RRF — backends with native fusion may override; see ADR Decision 3 SPI sub-point 2).
+ * The {@link EmbeddingProvider} dependency is optional: when null, search degrades to BM25-only.
  */
 public class QueryStoreServiceImpl extends BaseOpenmrsService implements QueryStoreService {
 
@@ -128,23 +128,14 @@ public class QueryStoreServiceImpl extends BaseOpenmrsService implements QuerySt
 		if (StringUtils.isBlank(query) || limit <= 0) {
 			return Collections.emptyList();
 		}
-		SearchRequest.Builder bm25Req = SearchRequest.builder().queryText(query).limit(limit);
+		SearchRequest.Builder req = SearchRequest.builder().queryText(query).limit(limit);
 		if (scope != null) {
-			bm25Req.filter(scope);
+			req.filter(scope);
 		}
-		SearchResult bm25 = backend.bm25(bm25Req.build());
-
-		if (embeddingProvider == null) {
-			return toDocuments(bm25);
+		if (embeddingProvider != null) {
+			req.queryVector(embeddingProvider.embedQuery(query));
 		}
-		float[] queryVector = embeddingProvider.embedQuery(query);
-		SearchRequest.Builder knnReq = SearchRequest.builder().queryText(query).queryVector(queryVector).limit(limit);
-		if (scope != null) {
-			knnReq.filter(scope);
-		}
-		SearchResult knn = backend.knn(knnReq.build());
-
-		return ReciprocalRankFusion.fuse(bm25.getHits(), knn.getHits(), limit);
+		return toDocuments(backend.hybrid(req.build()));
 	}
 
 	private static List<QueryDocument> toDocuments(SearchResult result) {

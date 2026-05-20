@@ -86,6 +86,24 @@ public class LuceneBackendStoreTest {
 	}
 
 	@Test
+	public void bm25_matchesOnSynonymsField() {
+		// ADR Decision 6: synonyms are BM25-indexed as a top-level companion of text on the
+		// Lucene tier so an alternate-term query surfaces docs whose stored text uses the
+		// preferred name. Without the synonyms field, "HTN" would not find this doc — its
+		// citation-clean text is "Hypertension".
+		QueryDocument doc = doc("condition", "patient-A", "Hypertension", null);
+		doc.putMetadata(org.openmrs.module.querystore.QueryStoreConstants.FIELD_SYNONYMS,
+		    java.util.Arrays.asList("HTN", "High blood pressure"));
+		assertTrue(backend.upsert(doc).isSucceeded());
+
+		SearchResult result = backend.bm25(SearchRequest.builder().resourceType("condition").queryText("HTN")
+		        .filter(Filter.patientScope("patient-A")).limit(10).build());
+
+		assertEquals(1, result.getHits().size());
+		assertEquals(doc.getResourceUuid(), result.getHits().get(0).getDocument().getResourceUuid());
+	}
+
+	@Test
 	public void upsertIsIdempotent() {
 		QueryDocument doc = doc("obs", "patient-A", "Hemoglobin A1c 7.5", null);
 		assertTrue(backend.upsert(doc).isSucceeded());
@@ -355,7 +373,8 @@ public class LuceneBackendStoreTest {
 	public void capabilitiesReportLuceneTier() {
 		BackendCapabilities caps = backend.capabilities();
 		assertTrue(caps.supportsKnn());
-		assertFalse("Lucene tier fuses at the service layer per Decision 3", caps.supportsHybridNative());
+		assertFalse("Lucene tier inherits the SPI-default RRF per Decision 3 (no native hybrid)",
+		        caps.supportsHybridNative());
 		assertFalse("single-host Lucene cannot do cross-patient kNN at multi-million scale",
 		        caps.supportsCrossPatientKnnAtScale());
 		assertTrue(caps.getRecommendedMaxCorpusSize() > 0);

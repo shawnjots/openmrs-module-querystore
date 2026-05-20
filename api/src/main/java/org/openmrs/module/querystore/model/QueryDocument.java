@@ -143,15 +143,35 @@ public class QueryDocument {
 			}
 			sb.append(stored);
 		}
+		String synonymsText = getSynonymsText();
+		if (!synonymsText.isEmpty()) {
+			if (sb.length() > 0) {
+				sb.append(' ');
+			}
+			sb.append(synonymsText);
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * Space-joined synonyms suitable for BM25 indexing as a top-level companion of {@link #text}
+	 * (Lucene and Elasticsearch tiers per ADR Decision 3). Returns the empty string when the
+	 * {@code synonyms} metadata is absent, not a List, or contains only null/empty entries.
+	 * The filter rules match {@link #getEmbeddingInput()}'s synonym branch so both consumers
+	 * see the same blob — empty strings dropped to avoid double-spaces in the indexed text.
+	 */
+	public String getSynonymsText() {
 		Object synonyms = metadata.get(FIELD_SYNONYMS);
-		if (synonyms instanceof List) {
-			for (Object synonym : (List<?>) synonyms) {
-				if (synonym instanceof String && !((String) synonym).isEmpty()) {
-					if (sb.length() > 0) {
-						sb.append(' ');
-					}
-					sb.append(synonym);
+		if (!(synonyms instanceof List)) {
+			return "";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (Object synonym : (List<?>) synonyms) {
+			if (synonym instanceof String && !((String) synonym).isEmpty()) {
+				if (sb.length() > 0) {
+					sb.append(' ');
 				}
+				sb.append(synonym);
 			}
 		}
 		return sb.toString();

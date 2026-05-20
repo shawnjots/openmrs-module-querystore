@@ -57,7 +57,7 @@ Type-specific fields go in `putMetadata(key, value)`. Encounter / visit / locati
 
 If your records carry a primary coded concept, also populate these via `putMetadata` so the framework enriches the embedding input per [ADR Decision 6's Synonyms-and-group-obs convention](./adr.md#synonyms-and-group-obs-convention):
 
-- `synonyms` — a `List<String>` of locale-aware concept synonyms (use `ConceptNameUtil.getSynonyms(...)`). Concatenated onto the embedding input so vectors are synonym-aware (an "HTN" query hits a doc whose preferred name is "Hypertension" without forcing consumers to expand synonyms at query time).
+- `synonyms` — a `List<String>` of locale-aware concept synonyms (use `ConceptNameUtil.getSynonyms(...)`). Concatenated onto the embedding input so vectors are synonym-aware on every backend; also BM25-indexed by the Lucene and Elasticsearch tiers as a top-level companion of `text` so an "HTN" query hits a doc whose preferred name is "Hypertension" via keyword match too. The MySQL FULLTEXT tier covers only `text`; semantic-path synonym matching still works there via the embedding-input enrichment.
 - `obs_group_concept_name` — the parent group concept's name, for records that are members of a group obs. Prepended to the embedding input (but not the stored `text`) so group-level semantic queries match member vectors.
 
 ```java
