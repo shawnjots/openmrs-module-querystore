@@ -14,6 +14,7 @@ import java.util.Collections;
 import java.util.List;
 
 import org.openmrs.module.querystore.api.QueryStoreService;
+import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.embedding.EmbeddingProvider;
 import org.openmrs.module.querystore.model.QueryDocument;
 
@@ -39,7 +40,11 @@ final class BridgeAdviceTestSupport {
 
 		final List<String> bulkDeletedPatients = new ArrayList<>();
 
-		@Override public void index(QueryDocument document) { indexed.add(document); }
+		@Override
+		public WriteResult index(QueryDocument document) {
+			indexed.add(document);
+			return WriteResult.success();
+		}
 
 		@Override
 		public void delete(String resourceType, String resourceUuid) {

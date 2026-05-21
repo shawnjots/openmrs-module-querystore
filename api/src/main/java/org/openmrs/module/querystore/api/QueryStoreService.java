@@ -13,6 +13,7 @@ import java.util.List;
 
 import org.openmrs.annotation.Authorized;
 import org.openmrs.api.OpenmrsService;
+import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.model.QueryDocument;
 import org.openmrs.util.PrivilegeConstants;
 
@@ -27,8 +28,16 @@ public interface QueryStoreService extends OpenmrsService {
 	 * Indexes a clinical record into the query store, routing it to the correct per-type index
 	 * based on {@link QueryDocument#getResourceType()}. Internal: invoked by the sync pipeline,
 	 * not by consumers.
+	 *
+	 * <p>Returns a {@link WriteResult} describing whether the write actually landed. Callers that
+	 * track persistence accuracy (notably the bootstrap dispatcher, whose {@code documents_indexed}
+	 * counter must reflect confirmed writes, not just "the call didn't throw") MUST consult
+	 * {@link WriteResult#isSucceeded()} before counting the write as successful. A returned
+	 * failure carries the per-doc {@link org.openmrs.module.querystore.backend.DocFailure} so the
+	 * caller can log specifics. Throws {@link IllegalStateException} when the backend isn't
+	 * wired — a misconfiguration that the caller should surface, not silently absorb.
 	 */
-	void index(QueryDocument document);
+	WriteResult index(QueryDocument document);
 
 	/**
 	 * Removes the document with the given resource UUID from the given per-type index. Internal:

@@ -10,8 +10,10 @@
 package org.openmrs.module.querystore.api.impl;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.util.Collections;
 import java.util.EnumSet;
@@ -49,12 +51,54 @@ public class QueryStoreServiceImplTest {
 	}
 
 	@Test
-	public void index_toleratesMinimalDocument() {
+	public void index_throwsWhenBackendNotWired() {
+		// The prior contract silently returned, which let bootstrap credit "writes" that never landed
+		// — the silent-data-loss bug fix #2 closes. The new contract surfaces the misconfiguration so
+		// TypeBootstrapper.projectOne sees a RuntimeException, logs, and refuses to count the write.
 		QueryDocument doc = new QueryDocument();
 		doc.setResourceType("obs");
 		doc.setResourceUuid("obs-uuid");
-		service.index(doc);
-		assertNotNull(doc.getMetadata());
+		try {
+			service.index(doc);
+			fail("expected IllegalStateException because backend was not wired");
+		}
+		catch (IllegalStateException expected) {
+			assertTrue("error message should name the offending resource",
+			        expected.getMessage().contains("obs/obs-uuid"));
+		}
+	}
+
+	@Test
+	public void index_returnsFailedResultForNullDocumentOrUuid() {
+		// A null guard that returns a typed failure (rather than silently returning) lets the bootstrap
+		// dispatcher branch on "did the write land?" uniformly across all per-doc skip reasons.
+		WriteResult nullDocResult = service.index(null);
+		assertFalse("null document is not a successful write", nullDocResult.isSucceeded());
+		assertNotNull(nullDocResult.getFailure());
+
+		QueryDocument noUuid = new QueryDocument();
+		noUuid.setResourceType("obs");
+		WriteResult noUuidResult = service.index(noUuid);
+		assertFalse("document without resource_uuid is not a successful write", noUuidResult.isSucceeded());
+		assertEquals("obs", noUuidResult.getFailure().getResourceType());
+	}
+
+	@Test
+	public void index_returnsBackendResult() {
+		// The service must surface the backend's WriteResult so callers (bootstrap counter, bridge
+		// logging) can react to per-doc failures the backend reports without swallowing.
+		FakeBackendStore backend = new FakeBackendStore(false);
+		backend.upsertFailure = WriteResult.failed(new org.openmrs.module.querystore.backend.DocFailure(
+		        "obs", "obs-uuid", "simulated I/O", true));
+		service.setBackend(backend);
+
+		QueryDocument doc = new QueryDocument();
+		doc.setResourceType("obs");
+		doc.setResourceUuid("obs-uuid");
+		WriteResult result = service.index(doc);
+
+		assertFalse("propagated the backend's failure verdict", result.isSucceeded());
+		assertEquals("simulated I/O", result.getFailure().getErrorMessage());
 	}
 
 	@Test
@@ -183,6 +227,8 @@ public class QueryStoreServiceImplTest {
 		final AtomicInteger bulkDeleteByPatientCount = new AtomicInteger();
 		final java.util.List<String> bulkDeleteByPatientUuids = new java.util.ArrayList<>();
 
+		WriteResult upsertFailure;
+
 		FakeBackendStore(boolean existsByPatientReturn) {
 			this.existsByPatientReturn = existsByPatientReturn;
 		}
@@ -194,7 +240,9 @@ public class QueryStoreServiceImplTest {
 
 		@Override public void ensureSchema(String resourceType, SchemaSpec spec) { }
 		@Override public void deleteSchema(String resourceType) { }
-		@Override public WriteResult upsert(QueryDocument doc) { return null; }
+		@Override public WriteResult upsert(QueryDocument doc) {
+			return upsertFailure != null ? upsertFailure : WriteResult.success();
+		}
 		@Override public WriteResult delete(String resourceType, String resourceUuid) { return null; }
 		@Override public BulkWriteResult bulkUpsert(List<QueryDocument> docs) { return null; }
 		@Override public BulkWriteResult bulkDelete(String resourceType, List<String> uuids) { return null; }

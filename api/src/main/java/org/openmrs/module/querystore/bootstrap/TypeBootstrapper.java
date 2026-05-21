@@ -17,6 +17,8 @@ import org.apache.commons.logging.LogFactory;
 import org.openmrs.BaseOpenmrsData;
 import org.openmrs.OpenmrsObject;
 import org.openmrs.module.querystore.api.QueryStoreService;
+import org.openmrs.module.querystore.backend.DocFailure;
+import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.embedding.EmbeddingProvider;
 import org.openmrs.module.querystore.model.QueryDocument;
 import org.openmrs.module.querystore.serialization.AbstractRecordSerializer;
@@ -176,17 +178,27 @@ public abstract class TypeBootstrapper<T> {
 		}
 	}
 
-	/** Serialize → embed → index a single entity, returning true when a non-null document was
-	 *  written. Per-entity skip on failure: a poison record must not stall a scan (the {@link #run}
-	 *  cursor advances past it; {@link #runForPatient} likewise advances its local cursor). */
+	/** Serialize → embed → index a single entity, returning true only when the backend confirmed
+	 *  the write. Per-entity skip on failure: a poison record must not stall a scan (the
+	 *  {@link #run} cursor advances past it; {@link #runForPatient} likewise advances its local
+	 *  cursor). Reading {@link WriteResult#isSucceeded()} — rather than treating "no throw" as
+	 *  success — is what keeps {@code documents_indexed} honest. The old contract counted any
+	 *  call that didn't throw, which silently inflated the counter when the service swallowed a
+	 *  null-backend wiring gap or a backend's per-doc IO failure. */
 	private boolean projectOne(T entity, QueryStoreService service, EmbeddingProvider embedder) {
 		try {
 			QueryDocument doc = getSerializer().serialize(entity);
-			if (doc != null) {
-				doc.setEmbedding(embedder.embed(doc.getEmbeddingInput()));
-				service.index(doc);
+			if (doc == null) {
+				return false;
+			}
+			doc.setEmbedding(embedder.embed(doc.getEmbeddingInput()));
+			WriteResult result = service.index(doc);
+			if (result.isSucceeded()) {
 				return true;
 			}
+			DocFailure f = result.getFailure();
+			log.warn("Bootstrap write for " + getResourceType() + "/" + getUuid(entity)
+			        + " did not land: " + (f != null ? f.getErrorMessage() : "no failure detail"));
 		}
 		catch (RuntimeException e) {
 			log.warn("Skipping " + getResourceType() + "/" + getUuid(entity) + " due to failure", e);

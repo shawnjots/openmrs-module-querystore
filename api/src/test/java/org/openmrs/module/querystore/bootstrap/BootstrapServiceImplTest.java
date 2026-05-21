@@ -714,7 +714,10 @@ public class BootstrapServiceImplTest {
 	}
 
 	private static final class NullQueryStoreService implements QueryStoreService {
-		@Override public void index(QueryDocument document) { }
+		@Override
+		public org.openmrs.module.querystore.backend.WriteResult index(QueryDocument document) {
+			return org.openmrs.module.querystore.backend.WriteResult.success();
+		}
 		@Override public void delete(String resourceType, String resourceUuid) { }
 		@Override public void bulkDeleteByPatient(String patientUuid) { }
 		@Override public List<QueryDocument> searchByPatient(String p, String q, int l) { return Collections.emptyList(); }

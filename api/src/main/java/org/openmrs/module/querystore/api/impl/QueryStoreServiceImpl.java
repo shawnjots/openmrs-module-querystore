@@ -20,9 +20,11 @@ import org.openmrs.api.context.Context;
 import org.openmrs.api.impl.BaseOpenmrsService;
 import org.openmrs.module.querystore.api.QueryStoreService;
 import org.openmrs.module.querystore.backend.BackendStore;
+import org.openmrs.module.querystore.backend.DocFailure;
 import org.openmrs.module.querystore.backend.Filter;
 import org.openmrs.module.querystore.backend.SearchRequest;
 import org.openmrs.module.querystore.backend.SearchResult;
+import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.bootstrap.BootstrapService;
 import org.openmrs.module.querystore.embedding.EmbeddingProvider;
 import org.openmrs.module.querystore.model.QueryDocument;
@@ -60,15 +62,27 @@ public class QueryStoreServiceImpl extends BaseOpenmrsService implements QuerySt
 	}
 
 	@Override
-	public void index(QueryDocument document) {
-		if (document == null || document.getResourceUuid() == null) {
-			return;
+	public WriteResult index(QueryDocument document) {
+		if (document == null) {
+			return WriteResult.failed(new DocFailure(null, null, "document was null", false));
+		}
+		if (document.getResourceUuid() == null) {
+			return WriteResult.failed(new DocFailure(document.getResourceType(), null,
+			        "document resource_uuid was null", false));
 		}
 		if (backend == null) {
-			log.warn("No BackendStore wired; ignoring index call for " + document.getResourceUuid());
-			return;
+			// Misconfiguration, not a per-doc problem — silently swallowing here is what produced the
+			// "bootstrap reports 682 indexed but the index holds 0" failure mode the slice fixes.
+			// Throwing lets the bootstrap dispatcher (and any other caller that cares about persistence
+			// accuracy) react: TypeBootstrapper.projectOne catches RuntimeException to skip the record,
+			// without incrementing documents_indexed, so the counter only reflects confirmed writes.
+			throw new IllegalStateException(
+			        "No BackendStore wired into QueryStoreServiceImpl; cannot index "
+			                + document.getResourceType() + "/" + document.getResourceUuid()
+			                + ". Check wireBackend() in QueryStoreActivator.started() and the "
+			                + "querystore.backend GP value.");
 		}
-		backend.upsert(document);
+		return backend.upsert(document);
 	}
 
 	@Override

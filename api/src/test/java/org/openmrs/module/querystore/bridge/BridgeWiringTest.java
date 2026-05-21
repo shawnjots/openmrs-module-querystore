@@ -123,7 +123,11 @@ public class BridgeWiringTest {
 	private static final class RecordingService implements QueryStoreService {
 		final List<QueryDocument> indexed = new ArrayList<>();
 
-		@Override public synchronized void index(QueryDocument document) { indexed.add(document); }
+		@Override
+		public synchronized org.openmrs.module.querystore.backend.WriteResult index(QueryDocument document) {
+			indexed.add(document);
+			return org.openmrs.module.querystore.backend.WriteResult.success();
+		}
 		@Override public void delete(String resourceType, String resourceUuid) { }
 		@Override public void bulkDeleteByPatient(String patientUuid) { }
 		@Override public List<QueryDocument> searchByPatient(String p, String q, int l) {

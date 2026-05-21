@@ -237,7 +237,7 @@ public class PatientIndexingAdviceTest {
 		RuntimeException throwOnBulkDelete;
 
 		@Override
-		public void index(QueryDocument document) {
+		public org.openmrs.module.querystore.backend.WriteResult index(QueryDocument document) {
 			// This fixture is only used by purge-path tests; the dispatch loop never enters the
 			// index branch on those paths. A future regression that lands an index() call here is
 			// a real surprise, not a silently-buffered event.

@@ -9,7 +9,11 @@
  */
 package org.openmrs.module.querystore.bridge;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.openmrs.module.querystore.api.QueryStoreService;
+import org.openmrs.module.querystore.backend.DocFailure;
+import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.embedding.EmbeddingProvider;
 import org.openmrs.module.querystore.model.QueryDocument;
 
@@ -26,6 +30,8 @@ import org.openmrs.module.querystore.model.QueryDocument;
  */
 public class BridgeIndexer {
 
+	private static final Log log = LogFactory.getLog(BridgeIndexer.class);
+
 	private final QueryStoreService queryStoreService;
 
 	private final EmbeddingProvider embeddingProvider;
@@ -35,9 +41,21 @@ public class BridgeIndexer {
 		this.embeddingProvider = embeddingProvider;
 	}
 
+	/**
+	 * Embed and write the document. The AOP path is fire-and-forget by design (invoked from
+	 * {@code AfterCommitDispatcher} after the source-record transaction has committed), so per-doc
+	 * failures are logged here rather than thrown — there's no caller upstack who could meaningfully
+	 * react. Bootstrap goes through {@code TypeBootstrapper.projectOne} instead and consumes the
+	 * {@link WriteResult} directly so its progress counter only credits confirmed writes.
+	 */
 	public void index(QueryDocument doc) {
 		doc.setEmbedding(embeddingProvider.embed(doc.getEmbeddingInput()));
-		queryStoreService.index(doc);
+		WriteResult result = queryStoreService.index(doc);
+		if (!result.isSucceeded()) {
+			DocFailure f = result.getFailure();
+			log.warn("Bridge write failed for " + doc.getResourceType() + "/" + doc.getResourceUuid()
+			        + ": " + (f != null ? f.getErrorMessage() : "no failure detail"));
+		}
 	}
 
 	public void delete(String resourceType, String resourceUuid) {

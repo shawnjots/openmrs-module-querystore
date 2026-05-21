@@ -154,6 +154,29 @@ public class TypeBootstrapperTest {
 	}
 
 	@Test
+	public void run_serviceReturnsFailedWriteResult_doesNotCreditTheRecord() {
+		// Regression for the silent-data-loss bug fix #2 closes. Previously, service.index() returned
+		// void; the bootstrap loop treated "no throw" as success and incremented documents_indexed
+		// even when the underlying backend silently dropped the write (LuceneBackendStore.upsert
+		// catches IOException and returns a failed WriteResult). The new contract surfaces the failure
+		// via WriteResult; the counter must only credit confirmed writes.
+		FakeBootstrapper b = new FakeBootstrapper();
+		b.queuePage(entity("a", Instant.parse("2025-01-01T00:00:00Z")),
+		        entity("ghost", Instant.parse("2025-01-02T00:00:00Z")),
+		        entity("c", Instant.parse("2025-01-03T00:00:00Z")));
+		service.failUuid = "ghost";
+		BootstrapProgress progress = new BootstrapProgress("test");
+
+		b.run(progress, service, embedder, progressDao);
+
+		assertEquals(BootstrapStatus.COMPLETED, progress.getStatus());
+		assertEquals("only the two confirmed-landed writes are credited; the dropped one is not",
+		        2, progress.getDocumentsIndexed());
+		assertEquals("cursor still advances past the dropped record so the scan doesn't stall",
+		        "c", progress.getCursorUuid());
+	}
+
+	@Test
 	public void run_indexFailureOnSingleEntity_isLoggedSkippedAndCursorAdvances() {
 		// Poison-record protection: an exception from serialize/embed/index on one entity must not
 		// permanently stall the bootstrap. The failing entity is skipped (no count increment), the
@@ -294,7 +317,19 @@ public class TypeBootstrapperTest {
 
 	private static final class RecordingQueryStoreService implements QueryStoreService {
 		final List<QueryDocument> indexed = new ArrayList<>();
-		@Override public void index(QueryDocument document) { indexed.add(document); }
+		String failUuid;
+
+		@Override
+		public org.openmrs.module.querystore.backend.WriteResult index(QueryDocument document) {
+			indexed.add(document);
+			if (failUuid != null && failUuid.equals(document.getResourceUuid())) {
+				return org.openmrs.module.querystore.backend.WriteResult.failed(
+				        new org.openmrs.module.querystore.backend.DocFailure(
+				                document.getResourceType(), document.getResourceUuid(),
+				                "simulated backend failure", true));
+			}
+			return org.openmrs.module.querystore.backend.WriteResult.success();
+		}
 		@Override public void delete(String resourceType, String resourceUuid) { /* unused */ }
 		@Override public void bulkDeleteByPatient(String patientUuid) { /* unused */ }
 		@Override public List<QueryDocument> searchByPatient(String p, String q, int l) { return Collections.emptyList(); }
