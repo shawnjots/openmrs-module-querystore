@@ -13,8 +13,8 @@ import java.util.Objects;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.openmrs.module.querystore.SkipLogFormat;
 import org.openmrs.module.querystore.api.QueryStoreService;
-import org.openmrs.module.querystore.backend.DocFailure;
 import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.embedding.EmbeddingProvider;
 import org.openmrs.module.querystore.model.QueryDocument;
@@ -59,9 +59,9 @@ public class BridgeIndexer {
 		        "QueryStoreService.index returned null for " + doc.getResourceType() + "/"
 		                + doc.getResourceUuid() + " — non-null is part of the SPI contract");
 		if (!result.isSucceeded()) {
-			DocFailure f = result.getFailure();
-			log.warn("[bridge] write failed for " + doc.getResourceType() + "/" + doc.getResourceUuid()
-			        + ": " + (f != null ? f.getErrorMessage() : "no failure detail"));
+			// Grep-able by the [querystore-skip] tag SkipLogFormat owns. Same shape as the bootstrap
+			// path so an operator's grok pattern catches both layers with one rule.
+			log.warn(SkipLogFormat.format("bridge", result.getFailure()));
 		}
 	}
 

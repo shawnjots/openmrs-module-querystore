@@ -17,8 +17,8 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.openmrs.BaseOpenmrsData;
 import org.openmrs.OpenmrsObject;
+import org.openmrs.module.querystore.SkipLogFormat;
 import org.openmrs.module.querystore.api.QueryStoreService;
-import org.openmrs.module.querystore.backend.DocFailure;
 import org.openmrs.module.querystore.backend.WriteResult;
 import org.openmrs.module.querystore.embedding.EmbeddingProvider;
 import org.openmrs.module.querystore.model.QueryDocument;
@@ -202,13 +202,15 @@ public abstract class TypeBootstrapper<T> {
 			if (result.isSucceeded()) {
 				return true;
 			}
-			DocFailure f = result.getFailure();
-			log.warn("[bootstrap] write failed for " + getResourceType() + "/" + getUuid(entity)
-			        + ": " + (f != null ? f.getErrorMessage() : "no failure detail"));
+			// Grep-able by the [querystore-skip] tag SkipLogFormat owns. Operators recovering from a
+			// transient backend incident filter on retryable=true to find candidates to re-project.
+			log.warn(SkipLogFormat.format("bootstrap", result.getFailure()));
 		}
 		catch (RuntimeException e) {
-			log.warn("[bootstrap] skipping " + getResourceType() + "/" + getUuid(entity)
-			        + " due to failure", e);
+			// retryable=null → "unknown": we caught a thrown exception, not a DocFailure-bearing
+			// WriteResult, so the backend's retryable hint isn't available on this path.
+			log.warn(SkipLogFormat.format("bootstrap", getResourceType(), getUuid(entity),
+			        null, e.getMessage()), e);
 		}
 		return false;
 	}
