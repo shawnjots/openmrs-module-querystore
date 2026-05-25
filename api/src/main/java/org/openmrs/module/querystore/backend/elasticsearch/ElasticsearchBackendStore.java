@@ -277,10 +277,16 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 		}
 		List<String> indexes = resolveIndexes(req);
 		Query filter = ElasticsearchFilterTranslator.toQuery(req.getFilters());
-		// multi_match OR-fans across [text, synonyms] so an alternate-term query surfaces docs
-		// whose preferred name uses the canonical term per ADR Decision 6.
+		// multi_match OR-fans across [text, synonyms, description^boost] so an alternate-term or
+		// category-word query surfaces docs whose preferred name doesn't carry the matching term
+		// (e.g. "kidney" hits Blood urea nitrogen via its description) per ADR Decision 6. The
+		// description boost is shared with the Lucene tier via QueryStoreConstants so the two
+		// backends can't silently drift.
 		Query bm25 = Query.of(q -> q.multiMatch(m -> m
-		        .fields(ElasticsearchFieldNames.TEXT, ElasticsearchFieldNames.SYNONYMS)
+		        .fields(ElasticsearchFieldNames.TEXT,
+		                ElasticsearchFieldNames.SYNONYMS,
+		                ElasticsearchFieldNames.DESCRIPTION + "^"
+		                        + QueryStoreConstants.BM25_DESCRIPTION_BOOST)
 		        .query(req.getQueryText())));
 		Query combined = filter == null ? bm25
 		        : Query.of(q -> q.bool(b -> b.must(bm25).filter(filter)));
@@ -459,6 +465,13 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 			// also lives in metadata_json for rehydration. Duplication is intentional — this
 			// field exists purely so BM25 can match.
 			source.put(ElasticsearchFieldNames.SYNONYMS, synonyms);
+		}
+		String descriptionBlob = doc.getDescriptionText();
+		if (!descriptionBlob.isEmpty()) {
+			// Top-level text field used by BM25's multi_match; the same string is also in
+			// metadata_json for rehydration. Description is not added to the embedding input —
+			// see ConceptNameUtil.getDescription for the rationale.
+			source.put(ElasticsearchFieldNames.DESCRIPTION, descriptionBlob);
 		}
 		if (doc.getEmbedding() != null) {
 			// Jackson serializes float[] directly as a JSON number array (no per-element boxing).

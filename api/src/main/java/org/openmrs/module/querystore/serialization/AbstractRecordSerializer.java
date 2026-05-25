@@ -12,6 +12,7 @@ package org.openmrs.module.querystore.serialization;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_CONCEPT_CLASS;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_CONCEPT_NAME;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_CONCEPT_UUID;
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_DESCRIPTION;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_ENCOUNTER_TYPE_NAME;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_ENCOUNTER_TYPE_UUID;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_ENCOUNTER_UUID;
@@ -93,9 +94,11 @@ public abstract class AbstractRecordSerializer<T> implements ClinicalRecordSeria
 	protected abstract void populate(T record, QueryDocument doc);
 
 	/**
-	 * Populates concept_uuid / concept_name / concept_class / synonyms. The {@code preferredName}
-	 * is taken as a parameter so the same string used in {@code text} composition is reused here
-	 * — keeps the two surfaces consistent and avoids re-walking the concept's names collection.
+	 * Populates concept_uuid / concept_name / concept_class / synonyms / description. The
+	 * {@code preferredName} is taken as a parameter so the same string used in {@code text}
+	 * composition is reused here — keeps the two surfaces consistent and avoids re-walking the
+	 * concept's names collection. Description is BM25-searched but NOT included in the embedding
+	 * input (see {@link ConceptNameUtil#getDescription}).
 	 */
 	protected final void putConceptFields(QueryDocument doc, Concept concept, String preferredName) {
 		if (concept == null) {
@@ -113,6 +116,22 @@ public abstract class AbstractRecordSerializer<T> implements ClinicalRecordSeria
 		List<String> synonyms = ConceptNameUtil.getSynonyms(concept, name);
 		if (!synonyms.isEmpty()) {
 			doc.putMetadata(FIELD_SYNONYMS, synonyms);
+		}
+		putDescription(doc, concept);
+	}
+
+	/**
+	 * Writes the concept's free-text description (locale-resolved via
+	 * {@link ConceptNameUtil#getDescription}) into {@link QueryStoreConstants#FIELD_DESCRIPTION}.
+	 * Extracted from {@link #putConceptFields} so serializers that use domain-specific concept
+	 * metadata field names (Allergy's {@code allergen_*}, PatientProgram's {@code program_*})
+	 * can pick up the BM25 vocabulary win without inheriting the rest of the concept-field
+	 * contract. No-op on null concept or empty description.
+	 */
+	protected final void putDescription(QueryDocument doc, Concept concept) {
+		String description = ConceptNameUtil.getDescription(concept);
+		if (!description.isEmpty()) {
+			doc.putMetadata(FIELD_DESCRIPTION, description);
 		}
 	}
 

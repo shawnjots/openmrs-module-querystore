@@ -44,6 +44,16 @@ final class LuceneFieldNames {
 	static final String SYNONYMS = QueryStoreConstants.FIELD_SYNONYMS;
 
 	/**
+	 * BM25-indexed companion of the {@code description} metadata string. The concept's free-text
+	 * description (CIEL-authored) gives the query parser additional vocabulary so a record whose
+	 * preferred name doesn't carry the category word still surfaces — e.g. "Blood urea nitrogen"
+	 * doesn't say "kidney" in its name but its description does. Stored {@code Field.Store.NO}
+	 * because consumers (chartsearchai's chart, the LLM) should read the citation-clean
+	 * {@link #TEXT}; the description exists purely for retrieval vocabulary.
+	 */
+	static final String DESCRIPTION = QueryStoreConstants.FIELD_DESCRIPTION;
+
+	/**
 	 * Stored byte blob carrying the raw float32 embedding. Doubles as the source the brute-force
 	 * kNN scan iterates over — Lucene 8 ships no native HNSW kNN field, and the tier is pinned
 	 * to 8.11.2 to match core's transitive Lucene (see {@code LuceneBackendStore} class javadoc).

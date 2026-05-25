@@ -104,6 +104,25 @@ public class LuceneBackendStoreTest {
 	}
 
 	@Test
+	public void bm25_matchesOnDescriptionField() {
+		// Concept descriptions are BM25-indexed as a top-level companion of text so a
+		// category-word query surfaces docs whose preferred name doesn't carry the matching
+		// term — e.g. "Blood urea nitrogen" doesn't say "kidney" in its name but its concept
+		// description does. Without this field, a "kidney" query would miss BUN entirely and
+		// the smoke-eval P@5 gain on the kidney query (+0.20) would silently disappear.
+		QueryDocument doc = doc("obs", "patient-A", "Blood urea nitrogen: 82.9 mmol/L", null);
+		doc.putMetadata(org.openmrs.module.querystore.QueryStoreConstants.FIELD_DESCRIPTION,
+				"Measure of urea levels in the blood often used to assess kidney status.");
+		assertTrue(backend.upsert(doc).isSucceeded());
+
+		SearchResult result = backend.bm25(SearchRequest.builder().resourceType("obs").queryText("kidney")
+				.filter(Filter.patientScope("patient-A")).limit(10).build());
+
+		assertEquals("description-only term must surface the doc", 1, result.getHits().size());
+		assertEquals(doc.getResourceUuid(), result.getHits().get(0).getDocument().getResourceUuid());
+	}
+
+	@Test
 	public void upsertIsIdempotent() {
 		QueryDocument doc = doc("obs", "patient-A", "Hemoglobin A1c 7.5", null);
 		assertTrue(backend.upsert(doc).isSucceeded());

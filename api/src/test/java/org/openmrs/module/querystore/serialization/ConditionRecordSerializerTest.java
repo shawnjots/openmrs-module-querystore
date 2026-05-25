@@ -135,6 +135,41 @@ public class ConditionRecordSerializerTest {
 	}
 
 	@Test
+	public void serialize_description_populatedInMetadataNotInText() {
+		// Concept descriptions ride into a metadata field so BM25 can index them as searchable
+		// vocabulary without polluting the citation-clean text. Without this assertion, a future
+		// refactor could silently drop descriptions and the kidney-query retrieval win would
+		// disappear without breaking the existing text/synonyms tests.
+		Concept c = new Concept();
+		c.addName(preferredName("Blood urea nitrogen"));
+		org.openmrs.ConceptDescription d = new org.openmrs.ConceptDescription();
+		d.setDescription("Measure of urea levels in the blood often used to assess kidney status.");
+		d.setLocale(java.util.Locale.ENGLISH);
+		c.addDescription(d);
+
+		Condition condition = condition(coded(c));
+		QueryDocument doc = serializer.serialize(condition);
+
+		assertEquals("Measure of urea levels in the blood often used to assess kidney status.",
+				doc.getMetadata().get("description"));
+		assertFalse("description must not leak into stored text (citation-clean contract)",
+				doc.getText().contains("kidney"));
+	}
+
+	@Test
+	public void serialize_descriptionAbsent_metadataKeyOmitted() {
+		// 40-60% of concepts have no description in real OpenMRS data. The metadata key must
+		// stay absent (not present-but-empty) so doc.getMetadata().get("description") is null,
+		// matching the contract Lucene's toLuceneDocument relies on for the "skip TextField"
+		// branch and keeping metadata_json compact.
+		Condition condition = condition(coded(concept("Asthma")));
+		QueryDocument doc = serializer.serialize(condition);
+
+		assertNull("description metadata key must be absent when concept has no description",
+				doc.getMetadata().get("description"));
+	}
+
+	@Test
 	public void serialize_additionalDetail_inMetadataNotText() {
 		Condition condition = condition(coded(concept("Asthma")));
 		condition.setAdditionalDetail("Triggered by cold weather");

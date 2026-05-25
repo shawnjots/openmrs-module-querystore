@@ -210,6 +210,36 @@ public class AllergyRecordSerializerTest {
 	}
 
 	@Test
+	public void serialize_description_populatedInMetadataWhenAllergenIsCoded() {
+		// Allergy serializer was retrofitted to call putDescription after the synonyms write so
+		// allergy records pick up the same BM25 vocabulary bridge that obs/condition/diagnosis
+		// records get. Without this assertion, a future refactor that drops the putDescription
+		// call from AllergyRecordSerializer.populate would silently regress description-driven
+		// retrieval for allergen-coded records.
+		Concept c = new Concept();
+		c.addName(preferredName("Penicillin"));
+		org.openmrs.ConceptDescription d = new org.openmrs.ConceptDescription();
+		d.setDescription("Beta-lactam antibiotic; common cause of anaphylactic hypersensitivity.");
+		d.setLocale(java.util.Locale.ENGLISH);
+		c.addDescription(d);
+
+		QueryDocument doc = serializer.serialize(allergy(allergen(AllergenType.DRUG, c, null)));
+
+		assertEquals("Beta-lactam antibiotic; common cause of anaphylactic hypersensitivity.",
+				doc.getMetadata().get("description"));
+	}
+
+	@Test
+	public void serialize_description_absentWhenAllergenIsNonCoded() {
+		// Non-coded allergens have no Concept to source a description from. The metadata key
+		// must stay absent so toLuceneDocument/toSource skip the TextField/source.put branch.
+		QueryDocument doc = serializer.serialize(allergy(allergen(AllergenType.OTHER, null, "Bee stings")));
+
+		assertNull("description key must be absent for non-coded allergens",
+				doc.getMetadata().get("description"));
+	}
+
+	@Test
 	public void serialize_encounterContext_populated() {
 		EncounterType type = new EncounterType();
 		type.setUuid("etype-uuid");

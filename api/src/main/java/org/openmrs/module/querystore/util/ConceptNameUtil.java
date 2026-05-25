@@ -16,6 +16,7 @@ import java.util.Locale;
 import java.util.TreeSet;
 
 import org.openmrs.Concept;
+import org.openmrs.ConceptDescription;
 import org.openmrs.ConceptName;
 import org.openmrs.api.context.Context;
 import org.openmrs.util.LocaleUtility;
@@ -59,6 +60,53 @@ public final class ConceptNameUtil {
 
 	public static List<String> getSynonyms(Concept concept) {
 		return getSynonyms(concept, getPreferredName(concept));
+	}
+
+	/**
+	 * Returns the concept's free-text description for the active locale, falling back to any other
+	 * available description when no language-matching description exists. Returns the empty string
+	 * when the concept is null or has no description. Same language-only fallback rationale as
+	 * {@link #getSynonyms(Concept, String)} — CIEL/OCL dictionaries usually tag descriptions as
+	 * {@code en} while deployments run as {@code en_GB}/{@code en_US}.
+	 *
+	 * <p>Concept descriptions are authored by dictionary maintainers (CIEL, AMPATH, Bahmni) and
+	 * naturally contain the clinical-category vocabulary patients use in queries — e.g. "Blood urea
+	 * nitrogen" has a description that explicitly mentions "kidney". Indexing this text gives BM25
+	 * a vocabulary bridge between natural-language questions and records whose preferred name
+	 * doesn't carry the category word. Per the read-side contract this is searched by BM25 only;
+	 * it is NOT included in {@link QueryDocument#getEmbeddingInput()} to avoid the asymmetric-bias
+	 * concern documented in chartsearchai's {@code ChartSearchAiUtils.extractCategoryHints}.
+	 *
+	 * <p><b>Precedence:</b> (1) first description whose locale language matches the active
+	 * locale's language; (2) otherwise first non-empty description encountered in
+	 * {@code concept.getDescriptions()} iteration order. The fallback's iteration order is
+	 * Hibernate-determined ({@code PersistentSet}, no {@code @OrderBy}) — in practice CIEL/OCL
+	 * concepts have one description so this is rarely exercised; if a deployment needs
+	 * deterministic cross-locale fallback, sort the descriptions collection upstream. Returned
+	 * text is trimmed; whitespace-only descriptions are dropped to avoid indexing empty tokens.
+	 */
+	public static String getDescription(Concept concept) {
+		if (concept == null || concept.getDescriptions() == null
+				|| concept.getDescriptions().isEmpty()) {
+			return "";
+		}
+		String localeLanguage = resolveLocale().getLanguage();
+		ConceptDescription fallback = null;
+		for (ConceptDescription cd : concept.getDescriptions()) {
+			String text = cd.getDescription();
+			if (text == null || text.trim().isEmpty()) {
+				continue;
+			}
+			if (cd.getLocale() != null
+					&& cd.getLocale().getLanguage().equals(localeLanguage)) {
+				return text.trim();
+			}
+			if (fallback == null) {
+				fallback = cd;
+			}
+		}
+		return fallback != null && fallback.getDescription() != null
+				? fallback.getDescription().trim() : "";
 	}
 
 	/**

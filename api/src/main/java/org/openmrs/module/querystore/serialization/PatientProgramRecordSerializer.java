@@ -118,6 +118,10 @@ public class PatientProgramRecordSerializer extends AbstractRecordSerializer<Pat
 				doc.putMetadata(FIELD_SYNONYMS, synonyms);
 			}
 		}
+		// Description is independent of the synonyms preferred-name dedupe key — write it
+		// whenever a concept is present so the program record participates in the BM25
+		// category-vocabulary bridge alongside obs/condition/diagnosis records.
+		putDescription(doc, programConcept);
 
 		if (enrolledText != null) {
 			doc.putMetadata(FIELD_ENROLLMENT_DATE, enrolledText);

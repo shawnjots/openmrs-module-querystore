@@ -41,6 +41,15 @@ final class ElasticsearchFieldNames {
 	 */
 	static final String SYNONYMS = QueryStoreConstants.FIELD_SYNONYMS;
 
+	/**
+	 * BM25-indexed companion of the {@code description} metadata string. The concept's free-text
+	 * description gives multi_match additional vocabulary so a record whose preferred name doesn't
+	 * carry the category word still surfaces — e.g. "Blood urea nitrogen" doesn't say "kidney" in
+	 * its name but its description does. The structured value also lives in {@link #METADATA_JSON}
+	 * for rehydration; this field exists purely so BM25 can index it.
+	 */
+	static final String DESCRIPTION = QueryStoreConstants.FIELD_DESCRIPTION;
+
 	static final String EMBEDDING = "embedding";
 
 	static final String METADATA_JSON = "metadata_json";

@@ -117,7 +117,34 @@ public class QueryStoreServiceImpl extends BaseOpenmrsService implements QuerySt
 		if (!backend.existsByPatient(patientUuid)) {
 			ensureIndexedSafely(patientUuid);
 		}
-		return runHybrid(query, limit, Filter.patientScope(patientUuid));
+		List<QueryDocument> hits = runHybrid(query, limit, Filter.patientScope(patientUuid));
+		emitRetrievalLog(query, hits);
+		return hits;
+	}
+
+	/**
+	 * Retrieval-debug log: one {@code [QSEVAL]} line per hit at DEBUG level so the eval harness
+	 * ({@code /tmp/qs_smoke_eval.py}) can grep its rubric against the actual retrieval order
+	 * when querystore DEBUG is enabled. DEBUG (not INFO) because the line emits patient record
+	 * text — INFO would land PHI in production server logs by default. Operators running an
+	 * eval pass against a deployment enable DEBUG on this package via log4j2 config; production
+	 * pays nothing because the {@link Log#isDebugEnabled()} guard short-circuits before any
+	 * string concatenation.
+	 */
+	private void emitRetrievalLog(String query, List<QueryDocument> hits) {
+		if (!log.isDebugEnabled() || hits == null || hits.isEmpty()) {
+			return;
+		}
+		String safeQuery = query == null ? "" : query.replace('\n', ' ').replace('\r', ' ');
+		for (int i = 0; i < hits.size(); i++) {
+			QueryDocument d = hits.get(i);
+			String text = d == null || d.getText() == null
+					? "" : d.getText().replace('\n', ' ').replace('\r', ' ');
+			log.debug("[QSEVAL] q=[" + safeQuery + "] rank=" + (i + 1)
+					+ " type=" + (d == null ? "null" : d.getResourceType())
+					+ " uuid=" + (d == null ? "null" : d.getResourceUuid())
+					+ " text=[" + text + "]");
+		}
 	}
 
 	/** Lazy lookup avoids a Spring circular dependency: {@code BootstrapService} depends on

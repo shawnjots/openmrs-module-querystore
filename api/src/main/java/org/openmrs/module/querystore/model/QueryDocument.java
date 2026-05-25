@@ -9,6 +9,7 @@
  */
 package org.openmrs.module.querystore.model;
 
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_DESCRIPTION;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_OBS_GROUP_CONCEPT_NAME;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_SYNONYMS;
 
@@ -151,6 +152,20 @@ public class QueryDocument {
 			sb.append(synonymsText);
 		}
 		return sb.toString();
+	}
+
+	/**
+	 * Concept description string suitable for BM25 indexing as a top-level companion of
+	 * {@link #text} (Lucene and Elasticsearch tiers). Returns the empty string when the
+	 * {@code description} metadata is absent, not a String, or empty. Mirrors
+	 * {@link #getSynonymsText()} so backends use one shape — not two inline {@code instanceof
+	 * String} checks — for "BM25-shaped view of a concept-derived metadata field." Description
+	 * is deliberately NOT included in {@link #getEmbeddingInput()} to avoid the asymmetric-bias
+	 * concern documented on the embedding-input convention.
+	 */
+	public String getDescriptionText() {
+		Object value = metadata.get(FIELD_DESCRIPTION);
+		return value instanceof String ? (String) value : "";
 	}
 
 	/**

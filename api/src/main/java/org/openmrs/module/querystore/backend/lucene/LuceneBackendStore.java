@@ -474,6 +474,13 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 			target.add(new TextField(LuceneFieldNames.SYNONYMS, synonymsBlob, Field.Store.NO));
 		}
 
+		String descriptionBlob = source.getDescriptionText();
+		if (!descriptionBlob.isEmpty()) {
+			// Not stored — read path rehydrates from metadata_json. Indexed only for BM25.
+			target.add(new TextField(LuceneFieldNames.DESCRIPTION,
+					descriptionBlob, Field.Store.NO));
+		}
+
 		if (source.getEmbedding() != null) {
 			target.add(new StoredField(LuceneFieldNames.EMBEDDING_STORED,
 			        LuceneVectorCodec.encode(source.getEmbedding())));
@@ -543,13 +550,34 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 		return indexNames;
 	}
 
+	/**
+	 * Field boosts for the BM25 multi-match. {@link LuceneFieldNames#TEXT} stays at 1.0 (canonical
+	 * weight); synonyms match the text weight because both are concept-name-shaped strings;
+	 * description gets {@link QueryStoreConstants#BM25_DESCRIPTION_BOOST} because the free-text
+	 * body is longer and would otherwise dominate term-frequency scoring on category-word
+	 * queries. The field array passed to {@link MultiFieldQueryParser} is derived from this
+	 * map's key set so adding a fourth field touches one place, not two.
+	 */
+	private static final Map<String, Float> BM25_FIELD_BOOSTS;
+
+	private static final String[] BM25_FIELDS;
+
+	static {
+		Map<String, Float> boosts = new LinkedHashMap<>();
+		boosts.put(LuceneFieldNames.TEXT, 1.0f);
+		boosts.put(LuceneFieldNames.SYNONYMS, 1.0f);
+		boosts.put(LuceneFieldNames.DESCRIPTION, QueryStoreConstants.BM25_DESCRIPTION_BOOST);
+		BM25_FIELD_BOOSTS = Collections.unmodifiableMap(boosts);
+		BM25_FIELDS = BM25_FIELD_BOOSTS.keySet().toArray(new String[0]);
+	}
+
 	private Query buildBm25Query(String queryText, Query filterQuery) throws ParseException {
-		QueryParser parser = new MultiFieldQueryParser(
-		        new String[] { LuceneFieldNames.TEXT, LuceneFieldNames.SYNONYMS }, analyzer);
+		QueryParser parser = new MultiFieldQueryParser(BM25_FIELDS, analyzer, BM25_FIELD_BOOSTS);
 		// Bypass the parser's special-character handling — clinical text from the consumer side
 		// is treated as a natural-language phrase, not a Lucene DSL expression. The MultiField
-		// parser ORs matches across {@code text} and {@code synonyms} so an alternate-term query
-		// surfaces docs whose preferred name uses the canonical term per ADR Decision 6.
+		// parser ORs matches across {@code text}, {@code synonyms}, and {@code description} so an
+		// alternate-term or category-word query surfaces docs whose preferred name doesn't carry
+		// the matching term (e.g. "kidney" hits BUN via its description) per ADR Decision 6.
 		Query textQuery = parser.parse(QueryParser.escape(queryText));
 		if (filterQuery == null) {
 			return textQuery;

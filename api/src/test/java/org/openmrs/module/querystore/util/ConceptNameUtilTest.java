@@ -18,6 +18,7 @@ import java.util.Locale;
 
 import org.junit.Test;
 import org.openmrs.Concept;
+import org.openmrs.ConceptDescription;
 import org.openmrs.ConceptName;
 
 public class ConceptNameUtilTest {
@@ -86,6 +87,77 @@ public class ConceptNameUtilTest {
 
 		// Default locale resolves to en_GB (no Context); German synonym is filtered out.
 		assertEquals(Arrays.asList("HTN"), ConceptNameUtil.getSynonyms(c));
+	}
+
+	@Test
+	public void getDescription_returnsEmpty_whenConceptNull() {
+		assertEquals("", ConceptNameUtil.getDescription(null));
+	}
+
+	@Test
+	public void getDescription_returnsEmpty_whenNoDescriptions() {
+		// Common case in real data: ~40-60% of CIEL concepts have no description. Empty-string
+		// return means putConceptFields skips writing the metadata key — keeps the doc compact.
+		Concept c = new Concept();
+		c.addName(preferredName("Asthma"));
+		assertEquals("", ConceptNameUtil.getDescription(c));
+	}
+
+	@Test
+	public void getDescription_returnsLanguageMatch() {
+		Concept c = new Concept();
+		c.addName(preferredName("Hypertension"));
+		c.addDescription(description("Persistently high arterial blood pressure.", Locale.ENGLISH));
+		assertEquals("Persistently high arterial blood pressure.",
+				ConceptNameUtil.getDescription(c));
+	}
+
+	@Test
+	public void getDescription_fallsBackToAnyLocale_whenNoLanguageMatch() {
+		// CIEL frequently ships only "en" descriptions; deployments may run with non-English
+		// default locales. Returning the only available description beats no description at all
+		// for BM25 vocabulary — the alternative is dropping retrieval signal entirely.
+		Concept c = new Concept();
+		c.addName(preferredName("Hypertension"));
+		c.addDescription(description("Hypertonie - persistierend hoher Blutdruck.", Locale.GERMAN));
+		// Default locale resolves to en_GB (no Context); no language match → fall back to the only
+		// available description (German), keeping the BM25 signal rather than dropping it.
+		assertEquals("Hypertonie - persistierend hoher Blutdruck.",
+				ConceptNameUtil.getDescription(c));
+	}
+
+	@Test
+	public void getDescription_prefersLanguageMatchOverFirstEntry() {
+		// When a concept has descriptions in multiple locales, the active-language match wins
+		// over insertion order — locking the per-locale routing down so a future change to
+		// LinkedHashSet ordering can't silently swap which description gets indexed.
+		Concept c = new Concept();
+		c.addName(preferredName("Hypertension"));
+		c.addDescription(description("Hypertonie.", Locale.GERMAN));
+		c.addDescription(description("Persistently high arterial blood pressure.", Locale.ENGLISH));
+		c.addDescription(description("Hypertension artérielle.", Locale.FRENCH));
+		assertEquals("Persistently high arterial blood pressure.",
+				ConceptNameUtil.getDescription(c));
+	}
+
+	@Test
+	public void getDescription_skipsNullAndEmptyTextEntries() {
+		// Real OpenMRS data has been seen with placeholder/null description rows. Skipping them
+		// and continuing the scan ensures a usable description from another row is still found.
+		Concept c = new Concept();
+		c.addName(preferredName("Hypertension"));
+		c.addDescription(description(null, Locale.ENGLISH));
+		c.addDescription(description("", Locale.ENGLISH));
+		c.addDescription(description("Persistently high arterial blood pressure.", Locale.ENGLISH));
+		assertEquals("Persistently high arterial blood pressure.",
+				ConceptNameUtil.getDescription(c));
+	}
+
+	private static ConceptDescription description(String text, Locale locale) {
+		ConceptDescription d = new ConceptDescription();
+		d.setDescription(text);
+		d.setLocale(locale);
+		return d;
 	}
 
 	private static ConceptName name(String text) {

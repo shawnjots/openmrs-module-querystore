@@ -135,6 +135,40 @@ public class PatientProgramRecordSerializerTest {
 	}
 
 	@Test
+	public void serialize_description_populatedFromProgramConcept() {
+		// PatientProgram serializer was retrofitted to call putDescription after the synonyms
+		// write so program records pick up the BM25 vocabulary bridge. Without this assertion,
+		// a future refactor that drops the putDescription call would silently regress
+		// description-driven retrieval for program records (e.g. "HIV care" surfacing an "ART"
+		// program via its description that explicitly mentions HIV).
+		Concept c = new Concept();
+		c.addName(preferredName("HIV Program"));
+		org.openmrs.ConceptDescription d = new org.openmrs.ConceptDescription();
+		d.setDescription("Antiretroviral therapy programme for patients living with HIV/AIDS.");
+		d.setLocale(java.util.Locale.ENGLISH);
+		c.addDescription(d);
+		Program program = program("HIV Treatment", "program-uuid", c);
+
+		PatientProgram enrollment = enrollment(program, utcDate(2024, Calendar.JANUARY, 1));
+		QueryDocument doc = serializer.serialize(enrollment);
+
+		assertEquals("Antiretroviral therapy programme for patients living with HIV/AIDS.",
+				doc.getMetadata().get("description"));
+	}
+
+	@Test
+	public void serialize_description_absentWhenNoProgramConcept() {
+		// Program with no Concept (only an entity name) has no source for a description.
+		// Metadata key must stay absent so the backends skip the description-field branch.
+		Program program = program("HIV Treatment", "program-uuid", null);
+		PatientProgram enrollment = enrollment(program, utcDate(2024, Calendar.JANUARY, 1));
+		QueryDocument doc = serializer.serialize(enrollment);
+
+		assertNull("description key must be absent when program has no concept",
+				doc.getMetadata().get("description"));
+	}
+
+	@Test
 	public void serialize_noProgramConcept_fallsBackToEntityNameAndOmitsSynonyms() {
 		Program program = program("HIV Treatment", "program-uuid", null);
 

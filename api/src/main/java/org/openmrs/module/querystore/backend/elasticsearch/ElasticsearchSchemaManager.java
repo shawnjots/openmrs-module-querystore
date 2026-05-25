@@ -67,6 +67,14 @@ final class ElasticsearchSchemaManager {
 				if (remoteDims != null) {
 					assertDimsMatch(name, remoteDims, embeddingDims);
 					knownDims.put(name, remoteDims);
+					// Existing-index upgrade note: when new fields are added to buildMapping (e.g.
+					// the description field added for category-vocabulary BM25 bridging), they are
+					// NOT auto-added to indexes created by earlier versions. ES with the default
+					// dynamic=true would auto-map on first write, but the index mapping uses the
+					// schema as-of-creation. Operators upgrading a live ES deployment must either:
+					// (a) issue a one-time client.indices().putMapping(...) call with the new
+					// field property, or (b) delete + recreate the index (re-bootstrap). Tracked
+					// alongside the embedding-model versioning open question in docs/adr.md.
 				} else {
 					// Index exists without an embedding mapping (e.g. created out-of-band). Treat as
 					// "we don't manage this" — surface clearly rather than write into it.
@@ -152,6 +160,7 @@ final class ElasticsearchSchemaManager {
 		properties.put(ElasticsearchFieldNames.RECORD_DATE, Property.of(p -> p.date(d -> d.format("yyyy-MM-dd"))));
 		properties.put(ElasticsearchFieldNames.TEXT, Property.of(p -> p.text(t -> t.analyzer("standard"))));
 		properties.put(ElasticsearchFieldNames.SYNONYMS, Property.of(p -> p.text(t -> t.analyzer("standard"))));
+		properties.put(ElasticsearchFieldNames.DESCRIPTION, Property.of(p -> p.text(t -> t.analyzer("standard"))));
 		properties.put(ElasticsearchFieldNames.EMBEDDING, Property.of(p -> p.denseVector(v -> v
 		        .dims(embeddingDims)
 		        .index(true)

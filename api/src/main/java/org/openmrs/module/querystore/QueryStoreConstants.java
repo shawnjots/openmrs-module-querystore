@@ -48,6 +48,19 @@ public final class QueryStoreConstants {
 	public static final String FIELD_CONCEPT_NAME = "concept_name";
 	public static final String FIELD_CONCEPT_CLASS = "concept_class";
 	public static final String FIELD_SYNONYMS = "synonyms";
+	public static final String FIELD_DESCRIPTION = "description";
+
+	/**
+	 * BM25 query-time boost applied to the description field across all backends. Less than 1.0
+	 * because the description's free-text body is longer than text/synonyms and would otherwise
+	 * dominate term-frequency scoring on category-word queries. Empirically: 0.3–0.7 is the safe
+	 * band; below 0.3 effectively disables the kidney-vocabulary bridge that the field was added
+	 * for, above 0.7 lets long descriptions drown out preferred-name matches on short queries.
+	 * Backend-side boost wiring (Lucene's MultiFieldQueryParser boosts map, Elasticsearch's
+	 * {@code multi_match} field expression) must read from this constant — duplicating the
+	 * literal in two places would silently drift over time.
+	 */
+	public static final float BM25_DESCRIPTION_BOOST = 0.5f;
 
 	public static final String FIELD_VALUE_NUMERIC = "value_numeric";
 	public static final String FIELD_VALUE_CODED_UUID = "value_coded_uuid";
