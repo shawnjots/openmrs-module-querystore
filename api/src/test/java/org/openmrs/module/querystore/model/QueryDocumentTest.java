@@ -10,6 +10,9 @@
 package org.openmrs.module.querystore.model;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_DESCRIPTION;
+import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_MAPPING_NAMES;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_OBS_GROUP_CONCEPT_NAME;
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_SYNONYMS;
 
@@ -88,5 +91,40 @@ public class QueryDocumentTest {
 		doc.setText("Systolic blood pressure: 120 mmHg");
 		doc.putMetadata(FIELD_SYNONYMS, Arrays.asList("SBP", "", null, "Systolic BP"));
 		assertEquals("Systolic blood pressure: 120 mmHg SBP Systolic BP", doc.getEmbeddingInput());
+	}
+
+	@Test
+	public void getEmbeddingInput_descriptionIsExcluded() {
+		// ADR Decision 6: description is BM25-only, deliberately NOT in the embedding input,
+		// to avoid the asymmetric-bias concern. A refactor that appends description text onto
+		// the embedding input would silently break the architectural contract — this test
+		// pins the exclusion.
+		QueryDocument doc = new QueryDocument();
+		doc.setText("Blood urea nitrogen: 100 mg/dL");
+		doc.putMetadata(FIELD_DESCRIPTION, "Lab test reflecting kidney function. Used to assess renal status.");
+		String embedded = doc.getEmbeddingInput();
+		assertEquals("Blood urea nitrogen: 100 mg/dL", embedded);
+		assertFalse("description text must not appear in embedding input",
+				embedded.contains("kidney") || embedded.contains("renal"));
+	}
+
+	@Test
+	public void getEmbeddingInput_mappingNamesAreExcluded() {
+		// ADR Decision 6: mapping_names is BM25-only, deliberately NOT in the embedding input,
+		// same asymmetric-bias rule as description. The slice that adds external-authority
+		// vocabulary (LOINC / ICD-10 / PIH / CIEL drug-class parents) into a BM25-only channel
+		// would lose its architectural justification if mapping_names started feeding the
+		// embedder — embedding-input pairwise discrimination on a small embedder like
+		// all-MiniLM-L6-v2 would degrade from vocabulary-overlapping mapping text.
+		QueryDocument doc = new QueryDocument();
+		doc.setText("Condition: Chronic kidney insufficiency. Status: ACTIVE");
+		doc.putMetadata(FIELD_MAPPING_NAMES, Arrays.asList(
+				"Chronic kidney disease, unspecified",
+				"Chronic kidney disease",
+				"Heparins"));
+		String embedded = doc.getEmbeddingInput();
+		assertEquals("Condition: Chronic kidney insufficiency. Status: ACTIVE", embedded);
+		assertFalse("mapping_names list must not feed the embedding input",
+				embedded.contains("Heparins") || embedded.contains("unspecified"));
 	}
 }

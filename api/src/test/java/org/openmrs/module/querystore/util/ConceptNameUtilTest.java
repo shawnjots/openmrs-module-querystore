@@ -381,6 +381,44 @@ public class ConceptNameUtilTest {
 	}
 
 	@Test
+	public void getMappingNames_retiredTermDedupeBoundary() {
+		// Two mappings carry the literal same name "Chronic kidney disease", but one term is
+		// retired. The retired-filter must run BEFORE TreeSet dedupe so the surviving entry is
+		// the live one, not whichever happens to win an undefined comparison. A refactor that
+		// re-orders the filter passes (e.g. dedupes first, then filters retired) would silently
+		// drop the live entry and keep nothing — this test pins the precedence.
+		ConceptReferenceTerm liveTerm = term("Chronic kidney disease", "3699");
+		ConceptReferenceTerm retiredTerm = term("Chronic kidney disease", "N18.9");
+		retiredTerm.setRetired(Boolean.TRUE);
+		Concept c = conceptWithMappings("Condition",
+				mappingTo(liveTerm),
+				mappingTo(retiredTerm));
+
+		assertEquals(Arrays.asList("Chronic kidney disease"),
+				ConceptNameUtil.getMappingNames(c));
+	}
+
+	@Test
+	public void getMappingNames_elevenEntries_dropsTheAlphabeticallyLastOne() {
+		// Cap+1 boundary. Eleven distinct names exercise the loop's termination condition: with
+		// `cap == MAX_MAPPING_NAMES` and a `break` at `cap == 0`, the eleventh alphabetic entry
+		// must be dropped. A refactor flipping `==` to `<=` would silently include 11; flipping
+		// to `<` would drop entry 10. Neither boundary is caught by the size-15 or size-10
+		// tests on their own.
+		ConceptMap[] mappings = new ConceptMap[11];
+		for (int i = 0; i < 11; i++) {
+			char ch = (char) ('a' + i);
+			mappings[i] = mappingTo(term("name-" + ch, "Z" + i));
+		}
+		Concept c = conceptWithMappings("Boundary", mappings);
+
+		List<String> result = ConceptNameUtil.getMappingNames(c);
+		assertEquals(10, result.size());
+		assertTrue("entry 11 ('name-k') is alphabetically last and must be dropped",
+				!result.contains("name-k"));
+	}
+
+	@Test
 	public void getMappingNames_capsAtMaxMappingNames() {
 		// Pathological concept with 15 distinct populated mapping names exercises the cap.
 		// Result keeps the alphabetically-first 10; locks the order so a refactor that

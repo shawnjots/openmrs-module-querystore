@@ -24,6 +24,7 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 import org.junit.Before;
@@ -32,7 +33,9 @@ import org.openmrs.Concept;
 import org.openmrs.ConceptComplex;
 import org.openmrs.ConceptClass;
 import org.openmrs.ConceptDatatype;
+import org.openmrs.ConceptMap;
 import org.openmrs.ConceptNumeric;
+import org.openmrs.ConceptReferenceTerm;
 import org.openmrs.Drug;
 import org.openmrs.Encounter;
 import org.openmrs.EncounterProvider;
@@ -252,6 +255,40 @@ public class ObsRecordSerializerTest {
 		assertEquals("xray-handler|/storage/xray/123.png",
 				doc.getMetadata().get("value_complex_uri"));
 		assertEquals("ImageHandler", doc.getMetadata().get("value_complex_handler"));
+	}
+
+	@Test
+	public void serialize_mappingNames_populatedFromConceptMappings() {
+		// End-to-end integration: a concept with reference-term mappings flows through
+		// ObsRecordSerializer.serialize → AbstractRecordSerializer.putConceptFields →
+		// putMappingNames → metadata['mapping_names']. Without this test, a refactor that
+		// removes the putMappingNames() call from putConceptFields would silently lose the
+		// slice's contribution — every existing test still passes because they don't assert
+		// the field.
+		Concept c = new Concept();
+		c.addName(preferredName("Chronic kidney insufficiency"));
+		LinkedHashSet<ConceptMap> mappings = new LinkedHashSet<>();
+		mappings.add(termMapping("Chronic kidney disease, unspecified"));
+		mappings.add(termMapping("Chronic kidney disease"));
+		c.setConceptMappings(mappings);
+
+		Obs obs = obs(c);
+		obs.setValueText("noted");
+
+		QueryDocument doc = serializer.serialize(obs);
+
+		assertEquals(Arrays.asList(
+				"Chronic kidney disease",
+				"Chronic kidney disease, unspecified"),
+				doc.getMetadata().get("mapping_names"));
+	}
+
+	private static ConceptMap termMapping(String name) {
+		ConceptReferenceTerm t = new ConceptReferenceTerm();
+		t.setName(name);
+		ConceptMap m = new ConceptMap();
+		m.setConceptReferenceTerm(t);
+		return m;
 	}
 
 	@Test

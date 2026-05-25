@@ -177,20 +177,7 @@ public class QueryDocument {
 	 * see the same blob — empty strings dropped to avoid double-spaces in the indexed text.
 	 */
 	public String getSynonymsText() {
-		Object synonyms = metadata.get(FIELD_SYNONYMS);
-		if (!(synonyms instanceof List)) {
-			return "";
-		}
-		StringBuilder sb = new StringBuilder();
-		for (Object synonym : (List<?>) synonyms) {
-			if (synonym instanceof String && !((String) synonym).isEmpty()) {
-				if (sb.length() > 0) {
-					sb.append(' ');
-				}
-				sb.append(synonym);
-			}
-		}
-		return sb.toString();
+		return listToText(FIELD_SYNONYMS);
 	}
 
 	/**
@@ -203,17 +190,28 @@ public class QueryDocument {
 	 * across related concepts (the same asymmetric-bias rule applied to description).
 	 */
 	public String getMappingNamesText() {
-		Object names = metadata.get(FIELD_MAPPING_NAMES);
-		if (!(names instanceof List)) {
+		return listToText(FIELD_MAPPING_NAMES);
+	}
+
+	/**
+	 * Shared join behavior for the two BM25-companion list metadata fields ({@link #FIELD_SYNONYMS}
+	 * and {@link #FIELD_MAPPING_NAMES}). Returns empty string when the field is absent or not a
+	 * List; otherwise space-joins the contained Strings, skipping null and empty entries. Centralised
+	 * so the synonyms-and-mapping-names BM25 channel can't drift in filter behavior — a fix or
+	 * test contract change in one place applies to both consumers.
+	 */
+	private String listToText(String metadataKey) {
+		Object value = metadata.get(metadataKey);
+		if (!(value instanceof List)) {
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (Object n : (List<?>) names) {
-			if (n instanceof String && !((String) n).isEmpty()) {
+		for (Object item : (List<?>) value) {
+			if (item instanceof String && !((String) item).isEmpty()) {
 				if (sb.length() > 0) {
 					sb.append(' ');
 				}
-				sb.append(n);
+				sb.append(item);
 			}
 		}
 		return sb.toString();
