@@ -31,6 +31,9 @@ import org.openmrs.util.LocaleUtility;
  */
 public final class ConceptNameUtil {
 
+	// Cap on the non-SHORT bucket of getSynonyms; SHORT names are returned unconditionally.
+	// Trades embedding-input length for BM25 vocabulary breadth — see Decision 6's SHORT-name
+	// promotion paragraph for the 4-patient eval that ratified raising this from 3 to 10.
 	private static final int MAX_NON_SHORT_SYNONYMS = 10;
 
 	private ConceptNameUtil() {

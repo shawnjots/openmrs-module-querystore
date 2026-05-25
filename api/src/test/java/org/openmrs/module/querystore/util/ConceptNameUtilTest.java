@@ -112,6 +112,74 @@ public class ConceptNameUtilTest {
 	}
 
 	@Test
+	public void getSynonyms_nonShortNameTypesRouteToNonShortBucket() {
+		// The SHORT check is "type == ConceptNameType.SHORT" — it must reject every other
+		// possible value (null, FULLY_SPECIFIED, INDEX_TERM) so those names land in the
+		// otherNames bucket and obey the cap. Real CIEL data has plenty of null-typed names;
+		// a refactor that switches to "type.isShort()" or similar would NPE without this test.
+		Concept c = new Concept();
+		c.addName(preferredName("Hypertension"));
+		// Null-typed name (the default when concept_name_type column is null in CIEL data)
+		c.addName(name("untyped-synonym"));
+		// Explicit FULLY_SPECIFIED — also non-SHORT
+		ConceptName fqn = name("fully-specified-variant");
+		fqn.setConceptNameType(ConceptNameType.FULLY_SPECIFIED);
+		c.addName(fqn);
+		// INDEX_TERM — also non-SHORT
+		ConceptName indexTerm = name("index-term-variant");
+		indexTerm.setConceptNameType(ConceptNameType.INDEX_TERM);
+		c.addName(indexTerm);
+		// SHORT, for contrast — must come first in result.
+		c.addName(shortName("ZZZ-short"));
+
+		List<String> synonyms = ConceptNameUtil.getSynonyms(c);
+		// SHORT name first (regardless of alphabetic position), then non-SHORT bucket alpha.
+		assertEquals(Arrays.asList("ZZZ-short",
+				"fully-specified-variant", "index-term-variant", "untyped-synonym"),
+				synonyms);
+	}
+
+	@Test
+	public void getSynonyms_exactlyTenNonShortNames_keepsAllTen() {
+		// Boundary test pinning the cap=10 termination. A refactor flipping `if (cap == 0)`
+		// to `if (cap <= 0)` would silently include 11 entries; flipping to `if (cap < 1)`
+		// would lose entry 10. With exactly MAX_NON_SHORT_SYNONYMS entries the result must
+		// contain all of them with no off-by-one drop.
+		Concept c = new Concept();
+		c.addName(preferredName("Primary"));
+		c.addName(name("a"));
+		c.addName(name("b"));
+		c.addName(name("c"));
+		c.addName(name("d"));
+		c.addName(name("e"));
+		c.addName(name("f"));
+		c.addName(name("g"));
+		c.addName(name("h"));
+		c.addName(name("i"));
+		c.addName(name("j"));
+
+		assertEquals(Arrays.asList("a", "b", "c", "d", "e", "f", "g", "h", "i", "j"),
+				ConceptNameUtil.getSynonyms(c));
+	}
+
+	@Test
+	public void getSynonyms_locale_filterAppliesToShortNamesToo() {
+		// SHORT-name promotion must not bypass the locale filter — a German SHORT name is
+		// still German vocabulary and would pollute an English-locale deployment's BM25
+		// channel with non-locale terms. The filter sits before the type check so a refactor
+		// that swaps the order silently breaks this; the test pins the precedence down.
+		Concept c = new Concept();
+		c.addName(preferredName("Hypertension"));
+		ConceptName germanShort = localizedName("Bluthochdruck-Abk", Locale.GERMAN);
+		germanShort.setConceptNameType(ConceptNameType.SHORT);
+		c.addName(germanShort);
+		c.addName(shortName("HTN"));
+
+		// Default locale is en_GB (no Context); only the English SHORT name survives.
+		assertEquals(Arrays.asList("HTN"), ConceptNameUtil.getSynonyms(c));
+	}
+
+	@Test
 	public void getSynonyms_dedupesSameStringBetweenShortAndNonShortBuckets() {
 		// Real-world dictionaries occasionally register the same string twice — once tagged
 		// SHORT and once with a null/SYNONYM type. The SHORT bucket already carries the entry;
