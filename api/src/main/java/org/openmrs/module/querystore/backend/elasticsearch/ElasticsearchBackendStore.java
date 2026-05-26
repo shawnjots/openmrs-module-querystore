@@ -44,8 +44,11 @@ import co.elastic.clients.elasticsearch._types.BulkIndexByScrollFailure;
 import co.elastic.clients.elasticsearch._types.Conflicts;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch._types.ErrorCause;
+import co.elastic.clients.elasticsearch._types.FieldValue;
 import co.elastic.clients.elasticsearch._types.KnnSearch;
 import co.elastic.clients.elasticsearch._types.Refresh;
+import co.elastic.clients.elasticsearch._types.SortOptions;
+import co.elastic.clients.elasticsearch._types.SortOrder;
 import co.elastic.clients.elasticsearch._types.Time;
 import co.elastic.clients.elasticsearch._types.VersionType;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
@@ -79,6 +82,12 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 	private static final int RECOMMENDED_MAX_CORPUS = 50_000_000;
 
 	private static final int BATCH_SIZE = 500;
+
+	// Wildcard glob targeting every querystore-managed index in this cluster — bulkDeleteByPatient,
+	// existsByPatient, findAllByPatient, and the empty-resourceTypes search path all expand to the
+	// same shape. Single constant keeps the four call sites from drifting if the prefix or glob
+	// syntax ever changes.
+	private static final String ALL_INDICES_PATTERN = QueryStoreConstants.INDEX_PREFIX + "*";
 
 	// Mirror Lucene's HNSW candidate-width floor. Wider than k for better recall on small limits.
 	private static final long KNN_NUM_CANDIDATES_FLOOR = 100L;
@@ -217,7 +226,7 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 		long matched = 0;
 		try {
 			DeleteByQueryResponse resp = client().deleteByQuery(d -> d
-			        .index(QueryStoreConstants.INDEX_PREFIX + "*")
+			        .index(ALL_INDICES_PATTERN)
 			        .allowNoIndices(true)
 			        .ignoreUnavailable(true)
 			        .query(Query.of(q -> q.term(t -> t.field(ElasticsearchFieldNames.PATIENT_UUID).value(patientUuid))))
@@ -248,6 +257,82 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 	}
 
 	@Override
+	public List<QueryDocument> findAllByPatient(String patientUuid) {
+		if (StringUtils.isBlank(patientUuid)) {
+			return Collections.emptyList();
+		}
+		Query filter = Query.of(q -> q
+		        .term(t -> t.field(ElasticsearchFieldNames.PATIENT_UUID).value(patientUuid)));
+		try {
+			SearchResponse<Map> resp = client().search(s -> s
+			        .index(ALL_INDICES_PATTERN)
+			        .size(FULL_CHART_MAX_HITS)
+			        .trackTotalHits(t -> t.enabled(false))
+			        .allowNoIndices(true)
+			        .ignoreUnavailable(true)
+			        .query(filter)
+			        // Drop the dense_vector from the wire payload — readDocument doesn't decode it
+			        // for the LLM full-chart consumer (Decision 15) and serializing ~384 JSON floats
+			        // per doc would be the dominant cost on a multi-thousand-doc chart. Mirrors the
+			        // MySQL findAllByPatient SELECT that omits the embedding column and the Lucene
+			        // CHART_LOAD_FIELDS restricted-fetch — three tiers, one excluded payload.
+			        .source(src -> src.filter(f -> f.excludes(ElasticsearchFieldNames.EMBEDDING)))
+			        // ES-side sort by record_date desc so any truncation at FULL_CHART_MAX_HITS keeps
+			        // the most-recent slice — aligning with chartsearchai's recency-cap prompt
+			        // convention. Missing dates land last so legacy rows that pre-date the record_date
+			        // convention don't poison the head of the chart. A secondary {@code _doc asc}
+			        // sort pins the truncation boundary deterministically when many docs share a date
+			        // (or all docs lack one — migration scenario for legacy obs without obs_datetime);
+			        // ES's per-shard secondary order is otherwise unspecified and would make the
+			        // cap's cut-off vary across calls. {@code _doc} (not {@code _id}) because ES 7+
+			        // makes {@code _id} unsortable without enabling expensive fielddata; {@code _doc}
+			        // gives Lucene-internal order which is stable within a segment and cheap to read.
+			        // The Comparator pass below re-applies the full (date, type, uuid) ordering for
+			        // byte-identical output with the other backends.
+			        .sort(SortOptions.of(so -> so.field(f -> f
+			                .field(ElasticsearchFieldNames.RECORD_DATE)
+			                .order(SortOrder.Desc)
+			                .missing(FieldValue.of("_last")))))
+			        .sort(SortOptions.of(so -> so.field(f -> f
+			                .field("_doc")
+			                .order(SortOrder.Asc)))),
+			        Map.class);
+			List<co.elastic.clients.elasticsearch.core.search.Hit<Map>> hits = resp.hits().hits();
+			if (hits.size() >= FULL_CHART_MAX_HITS) {
+				// Hitting the cap is a v1 quirk of the ES tier: single-search size is bounded by
+				// max_result_window (default 10k). MySQL and Lucene have no equivalent cap because
+				// they stream from JDBC/Lucene directly. PIT+search_after pagination is the v1.1
+				// follow-up if a real consumer ever surfaces here. See ADR Decision 15 for the v1
+				// contract; the log message itself stays terse for ops dashboards.
+				log.warn("findAllByPatient(" + patientUuid + ") returned the ES v1 cap of "
+				        + FULL_CHART_MAX_HITS + " hits; older records beyond this slice are not in"
+				        + " the result.");
+			}
+			List<QueryDocument> all = new ArrayList<>(hits.size());
+			for (co.elastic.clients.elasticsearch.core.search.Hit<Map> h : hits) {
+				all.add(readDocument(h.index(), h.source()));
+			}
+			all.sort(BackendDocs.CHART_ORDER);
+			return all;
+		}
+		catch (ElasticsearchException | IOException e) {
+			// Mirror existsByPatient's stance: log + return empty rather than throwing. The service
+			// layer's caller is the LLM full-chart path; a thrown call strands a prompt mid-assembly,
+			// while an empty list lets the prompt fall back to its own absent-data handling. Tier-
+			// specific divergence from the MySQL/Lucene "partial-per-store" tolerance — see the SPI
+			// Javadoc on {@link BackendStore#findAllByPatient} for the contract that pins both shapes.
+			log.warn("findAllByPatient failed for " + patientUuid, e);
+			return Collections.emptyList();
+		}
+	}
+
+	// Single-search cap for the ES tier — see findAllByPatient. MySQL and Lucene tiers honour ADR
+	// Decision 15's no-limit contract natively; this value brackets the ES-specific quirk that v1
+	// inherits from the default max_result_window. Package-private so the integration test can
+	// assert against the same constant rather than baking 10_000 into the test text.
+	static final int FULL_CHART_MAX_HITS = 10_000;
+
+	@Override
 	public boolean existsByPatient(String patientUuid) {
 		if (StringUtils.isBlank(patientUuid)) {
 			return false;
@@ -257,7 +342,7 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 			// as soon as one document matches. allowNoIndices / ignoreUnavailable preserve the "no
 			// indexes yet" semantics consistent with the other backends.
 			co.elastic.clients.elasticsearch.core.CountResponse resp = client().count(c -> c
-			        .index(QueryStoreConstants.INDEX_PREFIX + "*")
+			        .index(ALL_INDICES_PATTERN)
 			        .query(Query.of(q -> q.term(t -> t.field(ElasticsearchFieldNames.PATIENT_UUID).value(patientUuid))))
 			        .terminateAfter(1L)
 			        .allowNoIndices(true)
@@ -443,7 +528,7 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 
 	private List<String> resolveIndexes(SearchRequest req) {
 		if (req.getResourceTypes().isEmpty()) {
-			return Collections.singletonList(QueryStoreConstants.INDEX_PREFIX + "*");
+			return Collections.singletonList(ALL_INDICES_PATTERN);
 		}
 		List<String> indexes = new ArrayList<>(req.getResourceTypes().size());
 		for (String type : req.getResourceTypes()) {

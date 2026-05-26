@@ -19,6 +19,7 @@ import java.sql.Types;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -255,6 +256,50 @@ public class MysqlBackendStore implements BackendStore {
 			log.warn("existsByPatient could not acquire session for " + patientUuid, e);
 			return false;
 		}
+	}
+
+	@Override
+	public List<QueryDocument> findAllByPatient(String patientUuid) {
+		if (StringUtils.isBlank(patientUuid)) {
+			return Collections.emptyList();
+		}
+		Set<String> tables = allTables();
+		if (tables.isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<QueryDocument> all = new ArrayList<>();
+		try {
+			JdbcSupport.inTransaction(sessionFactory, conn -> {
+				for (String table : tables) {
+					// Embedding column omitted: the full-chart consumer (ADR Decision 15) is the LLM
+					// path that reads text + metadata; decoding ~1.5 KB of float bytes per row across
+					// a multi-year chart is pure waste. Matches bm25SingleTable's projection choice.
+					String sql = "SELECT resource_uuid, patient_uuid, record_date, text, metadata_json, last_modified FROM "
+					        + table + " WHERE patient_uuid = ?";
+					try (PreparedStatement ps = conn.prepareStatement(sql)) {
+						ps.setString(1, patientUuid);
+						try (ResultSet rs = ps.executeQuery()) {
+							while (rs.next()) {
+								all.add(readDocument(table, rs, false));
+							}
+						}
+					}
+					catch (SQLException e) {
+						// One table failing should not strand the LLM caller — partial chart is
+						// preferable to a thrown call. Matches existsByPatient's table-isolation
+						// stance: missing data converges to indexing on the next probe.
+						log.warn("findAllByPatient probe failed for table " + table, e);
+					}
+				}
+				return null;
+			});
+		}
+		catch (RuntimeException e) {
+			log.warn("findAllByPatient could not acquire session for " + patientUuid, e);
+			return Collections.emptyList();
+		}
+		all.sort(BackendDocs.CHART_ORDER);
+		return all;
 	}
 
 	@Override

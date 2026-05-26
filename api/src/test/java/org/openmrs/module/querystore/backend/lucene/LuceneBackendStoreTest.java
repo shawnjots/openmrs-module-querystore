@@ -177,6 +177,51 @@ public class LuceneBackendStoreTest {
 	}
 
 	@Test
+	public void findAllByPatient_returnsAllDocsAcrossTypesOrderedByRecordDateDesc() {
+		// ADR Decision 15: getPatientChart returns every indexed doc for the patient, no filtering,
+		// ordered by record_date desc with (resource_type, resource_uuid) tie-breaker. The Lucene
+		// backend.findAllByPatient is the SPI primitive that backs it. Pinned cross-tier with the
+		// MySQL integration test so the CHART_ORDER Comparators can't silently drift.
+		QueryDocument recentObs = doc("obs", "patient-A", "Glucose 8.1", null);
+		recentObs.setDate(LocalDate.parse("2026-04-10"));
+		QueryDocument olderObs = doc("obs", "patient-A", "Glucose 7.4", null);
+		olderObs.setDate(LocalDate.parse("2025-12-01"));
+		QueryDocument condition = doc("condition", "patient-A", "Type 2 Diabetes", null);
+		condition.setDate(LocalDate.parse("2025-12-01"));
+		QueryDocument otherPatientObs = doc("obs", "patient-B", "Temperature 37.0", null);
+		otherPatientObs.setDate(LocalDate.parse("2026-04-10"));
+
+		assertTrue(backend.upsert(recentObs).isSucceeded());
+		assertTrue(backend.upsert(olderObs).isSucceeded());
+		assertTrue(backend.upsert(condition).isSucceeded());
+		assertTrue(backend.upsert(otherPatientObs).isSucceeded());
+
+		List<QueryDocument> chart = backend.findAllByPatient("patient-A");
+
+		assertEquals("must return all of patient-A's docs and no one else's", 3, chart.size());
+		assertEquals(recentObs.getResourceUuid(), chart.get(0).getResourceUuid());
+		assertEquals("tie-break on record_date must order condition before obs",
+		        condition.getResourceUuid(), chart.get(1).getResourceUuid());
+		assertEquals(olderObs.getResourceUuid(), chart.get(2).getResourceUuid());
+		for (QueryDocument hit : chart) {
+			assertEquals("must not leak other patients' docs", "patient-A", hit.getPatientUuid());
+		}
+	}
+
+	@Test
+	public void findAllByPatient_returnsEmptyForUnknownPatient() {
+		backend.upsert(doc("obs", "patient-A", "Temperature 38.5", null));
+
+		assertTrue(backend.findAllByPatient("nobody").isEmpty());
+	}
+
+	@Test
+	public void findAllByPatient_returnsEmptyForNullOrBlankUuid() {
+		assertTrue(backend.findAllByPatient(null).isEmpty());
+		assertTrue(backend.findAllByPatient("").isEmpty());
+	}
+
+	@Test
 	public void bulkDeleteByPatientRemovesAcrossTypes() {
 		backend.upsert(doc("obs", "patient-A", "Temperature 38.5", null));
 		backend.upsert(doc("condition", "patient-A", "Type 2 Diabetes", null));

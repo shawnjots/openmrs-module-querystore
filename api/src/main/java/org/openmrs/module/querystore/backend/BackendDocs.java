@@ -9,6 +9,8 @@
  */
 package org.openmrs.module.querystore.backend;
 
+import java.util.Comparator;
+
 import org.apache.commons.lang3.StringUtils;
 import org.openmrs.module.querystore.QueryStoreConstants;
 import org.openmrs.module.querystore.model.QueryDocument;
@@ -52,4 +54,24 @@ public final class BackendDocs {
 	public static String stripPrefix(String prefixed) {
 		return StringUtils.removeStart(prefixed, QueryStoreConstants.INDEX_PREFIX);
 	}
+
+	/**
+	 * Canonical ordering for {@link BackendStore#findAllByPatient(String)} results, shared by every
+	 * tier so the three backends produce byte-identical output for the same patient (ADR Decision
+	 * 15). {@code record_date} descending with {@code (resource_type, resource_uuid)} as the
+	 * deterministic tie-breaker; nulls sort last on every key so legacy rows that pre-date a
+	 * convention don't poison the head of the chart, and the cross-tier eval (chartsearchai's 153-
+	 * record set) cannot drift between MySQL, Lucene, and Elasticsearch because each calls the same
+	 * Comparator.
+	 *
+	 * <p>Each backend collects its per-tier candidate set (JDBC scan, Lucene {@code SimpleCollector},
+	 * ES wildcard search — the ES tier additionally pushes a {@code (record_date desc, _doc asc)}
+	 * sort to the cluster so the 10 000-hit single-search cap keeps the most-recent slice). The
+	 * Comparator below is then re-applied in-Java on all three tiers so the final emitted order is
+	 * byte-identical across backends — the cross-tier eval cannot drift on sort-key alone.
+	 */
+	public static final Comparator<QueryDocument> CHART_ORDER = Comparator
+	        .comparing(QueryDocument::getDate, Comparator.nullsLast(Comparator.reverseOrder()))
+	        .thenComparing(QueryDocument::getResourceType, Comparator.nullsLast(Comparator.naturalOrder()))
+	        .thenComparing(QueryDocument::getResourceUuid, Comparator.nullsLast(Comparator.naturalOrder()));
 }

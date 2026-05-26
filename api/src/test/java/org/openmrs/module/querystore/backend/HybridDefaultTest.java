@@ -113,6 +113,7 @@ public class HybridDefaultTest {
 		@Override public BulkWriteResult bulkDelete(String resourceType, List<String> uuids) { return null; }
 		@Override public BulkWriteResult bulkDeleteByPatient(String patientUuid) { return null; }
 		@Override public boolean existsByPatient(String patientUuid) { return false; }
+		@Override public List<QueryDocument> findAllByPatient(String patientUuid) { return java.util.Collections.emptyList(); }
 		@Override public BackendCapabilities capabilities() {
 			return new BackendCapabilities(supportsKnn, false, false, 1_000_000, EnumSet.allOf(Filter.Kind.class));
 		}

@@ -86,6 +86,58 @@ public interface BackendStore {
 	 */
 	boolean existsByPatient(String patientUuid);
 
+	/**
+	 * Returns every document keyed by {@code patient_uuid} across every per-type store, ordered by
+	 * {@code record_date} descending with {@code (resource_type, resource_uuid)} as the deterministic
+	 * tie-breaker. Backs {@code QueryStoreService.getPatientChart} per ADR Decision 15 — the
+	 * full-chart-to-LLM consumer path that needs the patient's entire indexed projection without
+	 * relevance ranking or result-count limits. Honors the second SPI invariant: the patient_uuid
+	 * filter must push down to the inverted index / FULLTEXT / term filter so the work is bounded
+	 * by the patient's document count, not by corpus size.
+	 *
+	 * <p>Returns an empty list when no per-type stores exist yet, when nothing is indexed for the
+	 * patient, or when {@code patientUuid} is null/blank — callers (the service layer) probe with
+	 * {@code existsByPatient} first and trigger lazy bootstrap on a true cold start, so an empty
+	 * return here means the bootstrap also produced nothing, which is a steady-state outcome.
+	 *
+	 * <p>Error tolerance is tier-shape-dependent but every implementation honours the "don't throw"
+	 * contract: failures are logged, an empty or partial chart is returned, and the LLM caller is
+	 * never left mid-prompt with a thrown call. Two shapes are recognised:
+	 * <ul>
+	 *   <li><b>Per-store partial</b> (MySQL, Lucene) — implementations enumerate per table / index;
+	 *   one store failing drops that store's contribution and the rest still appear in the chart.
+	 *   This is the preferred shape when the backend's read model has natural per-store
+	 *   boundaries.</li>
+	 *   <li><b>Call-level all-or-nothing</b> (Elasticsearch) — implementations issue a single
+	 *   cross-index search; a call-level failure (cluster red, connection lost) yields an empty
+	 *   chart for the whole call. Per-shard failures inside a successful response are absorbed into
+	 *   the returned hits silently. The cost of partial fallback (per-index serial searches) is not
+	 *   justified at the ES tier in v1, where the wildcard search is the operational hot path.</li>
+	 * </ul>
+	 * Callers must not interpret an empty list as "patient has no chart" without consulting
+	 * {@link #existsByPatient(String)} or accepting that v1 collapses both states to {@code []}.
+	 *
+	 * <p><b>Cross-call consistency.</b> Each implementation chooses its own snapshot model — the
+	 * SPI does not promise referential integrity between documents within a single call's result.
+	 * Specifically: MySQL reads all per-type tables in a single JDBC transaction (one read-view
+	 * across types); Lucene opens a fresh NRT {@code DirectoryReader} per index inside the loop,
+	 * so writes landing between two index iterations can appear in the later index but not the
+	 * earlier one; Elasticsearch's wildcard search is shard-snapshot consistent at the search time.
+	 * Consumers assembling LLM prompts from a chart with cross-document references (e.g. an obs's
+	 * encounter pointer) must tolerate the referenced doc being absent in the same result; the
+	 * three shapes converge to "everything indexed at some moment around the call," not "everything
+	 * indexed at one atomic instant."
+	 *
+	 * <p><b>Mid-purge race.</b> A {@link #bulkDeleteByPatient(String)} call interleaved with an
+	 * in-flight {@code findAllByPatient(patientUuid)} for the same patient can return a partial
+	 * chart on the per-store-partial tiers (MySQL is protected by its single transaction; Lucene
+	 * straddles the purge across per-index iterations; ES depends on shard-level timing). The
+	 * returned partial chart contains real but stale records for a patient mid-purge — operationally
+	 * significant when the purge is privacy-driven. Callers initiating a purge should not assume
+	 * concurrent reads have already drained.
+	 */
+	List<QueryDocument> findAllByPatient(String patientUuid);
+
 	SearchResult bm25(SearchRequest req);
 
 	SearchResult knn(SearchRequest req);

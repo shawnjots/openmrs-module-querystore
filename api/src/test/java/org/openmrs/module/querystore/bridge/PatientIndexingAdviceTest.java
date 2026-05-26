@@ -271,6 +271,11 @@ public class PatientIndexingAdviceTest {
 			return java.util.Collections.emptyList();
 		}
 
+		@Override
+		public java.util.List<QueryDocument> getPatientChart(String patientUuid) {
+			return java.util.Collections.emptyList();
+		}
+
 		@Override public void onStartup() { }
 
 		@Override public void onShutdown() { }

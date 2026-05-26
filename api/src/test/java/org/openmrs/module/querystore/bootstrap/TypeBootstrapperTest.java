@@ -334,6 +334,7 @@ public class TypeBootstrapperTest {
 		@Override public void bulkDeleteByPatient(String patientUuid) { /* unused */ }
 		@Override public List<QueryDocument> searchByPatient(String p, String q, int l) { return Collections.emptyList(); }
 		@Override public List<QueryDocument> search(String q, int l) { return Collections.emptyList(); }
+		@Override public List<QueryDocument> getPatientChart(String patientUuid) { return Collections.emptyList(); }
 		@Override public void onStartup() { /* unused */ }
 		@Override public void onShutdown() { /* unused */ }
 	}

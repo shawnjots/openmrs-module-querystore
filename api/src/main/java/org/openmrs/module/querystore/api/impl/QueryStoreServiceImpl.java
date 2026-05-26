@@ -178,6 +178,22 @@ public class QueryStoreServiceImpl extends BaseOpenmrsService implements QuerySt
 		return runHybrid(query, limit, null);
 	}
 
+	@Override
+	public List<QueryDocument> getPatientChart(String patientUuid) {
+		if (backend == null || patientUuid == null) {
+			return Collections.emptyList();
+		}
+		// Same cold-bootstrap protocol as searchByPatient: probe existsByPatient, lazy-project on
+		// miss, then read. Decision 15 explicitly mirrors searchByPatient's behaviour here so the
+		// first method to touch a never-indexed patient pays the projection cost once. The shared
+		// ensureIndexedSafely also keeps the swallow-on-failure semantics consistent — an
+		// index-failure must not block the LLM full-chart caller any more than it blocks search.
+		if (!backend.existsByPatient(patientUuid)) {
+			ensureIndexedSafely(patientUuid);
+		}
+		return backend.findAllByPatient(patientUuid);
+	}
+
 	private List<QueryDocument> runHybrid(String query, int limit, Filter scope) {
 		if (StringUtils.isBlank(query) || limit <= 0) {
 			return Collections.emptyList();

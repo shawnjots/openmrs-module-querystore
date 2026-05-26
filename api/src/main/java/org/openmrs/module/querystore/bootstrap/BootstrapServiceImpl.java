@@ -146,6 +146,19 @@ public class BootstrapServiceImpl extends BaseOpenmrsService implements Bootstra
 		}
 		Object lock = patientLocks.computeIfAbsent(patientUuid, k -> new Object());
 		synchronized (lock) {
+			// Re-probe inside the lock: callers (QueryStoreServiceImpl.searchByPatient /
+			// getPatientChart) test existsByPatient BEFORE entering this method, so two concurrent
+			// cold-touches on the same never-indexed patient both see false and both invoke
+			// ensureIndexed. Without this check, the lock would serialize them but the second
+			// thread would re-run the entire type-by-type projection (re-serialize, re-embed,
+			// re-upsert every record) — the version-guard upserts converge to the right index
+			// state but the embedding CPU cost is paid twice. A second probe inside the lock lets
+			// the late waiter short-circuit. existsByPatient is sub-linear (Decision 3 SPI
+			// invariant 2), so the cost of this guard is negligible compared to even one
+			// re-projection avoided.
+			if (backendSelector != null && backendSelector.getStore().existsByPatient(patientUuid)) {
+				return;
+			}
 			Map<String, ResourceTypeProvider> providers = discoverProviders();
 			for (String resourceType : allResourceTypes(providers)) {
 				try {

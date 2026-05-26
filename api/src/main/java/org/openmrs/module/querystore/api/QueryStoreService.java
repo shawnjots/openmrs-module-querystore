@@ -75,4 +75,46 @@ public interface QueryStoreService extends OpenmrsService {
 	 */
 	@Authorized(PrivilegeConstants.GET_PATIENTS)
 	List<QueryDocument> search(String query, int limit);
+
+	/**
+	 * Returns every indexed document for the patient — no relevance ranking, no caller-supplied
+	 * limit — ordered by {@code record_date} descending with {@code (resource_type, resource_uuid)}
+	 * as the deterministic tie-breaker (ADR Decision 15). Backs the full-chart-to-LLM consumer
+	 * pattern: the entire patient chart is passed to a model that does its own reasoning instead
+	 * of a question-conditioned relevance retrieval. A tier-specific cap applies on Elasticsearch —
+	 * see the operational caveats below.
+	 *
+	 * <p>Cold-patient side effect: identical to {@link #searchByPatient(String, String, int)} —
+	 * when no documents are indexed for {@code patientUuid}, the call synchronously projects the
+	 * patient's clinical data before returning. First touch on a never-indexed patient blocks for
+	 * seconds while serialization and embedding run; subsequent calls return at steady-state
+	 * latency. Same one-time cost paid by whichever method first touches the patient.
+	 *
+	 * <p><b>Sticky partial chart on first-touch failure.</b> If the per-patient projection succeeds
+	 * for some resource types but throws for others (e.g. a transient core-DB hiccup during the
+	 * Obs scan), the index ends up with a partial chart for that patient. The next call sees
+	 * {@code existsByPatient() == true} (the succeeded types are present), short-circuits the
+	 * cold-bootstrap path, and returns the partial chart without retrying the failed types. The
+	 * patient stays under-projected until the global scheduled scan re-runs (or a write event for
+	 * a failed-type resource triggers single-doc indexing). Operators monitoring querystore should
+	 * watch for the "Per-patient projection of {type} for patient {uuid} failed" WARN log as the
+	 * signal of an under-projected patient. A per-type-per-patient retry marker is tracked under
+	 * the ADR's "Lazy per-patient projection" open question.
+	 *
+	 * <p>Token-budget enforcement is the consumer's responsibility — v1 returns whatever the index
+	 * holds. A patient with a decade of vitals can produce thousands of documents totalling
+	 * megabytes of text; downstream recency caps or per-type filtering live in prompt assembly,
+	 * not here.
+	 *
+	 * <p><b>ES tier caveat (v1):</b> the Elasticsearch backend issues a single wildcard search
+	 * with {@code size = 10 000} (the default {@code max_result_window}); patients with more
+	 * documents see the most-recent slice and the older tail is silently dropped at the backend
+	 * with a WARN log. MySQL and Lucene are unbounded. Tier-agnostic consumers should expect
+	 * truncation above ~10 000 docs on ES until PIT + {@code search_after} pagination lifts the cap
+	 * (deferred to v1.1). The LLM full-chart consumer that motivates this method tops out at
+	 * context-window size well below 10 000 documents, so the cap is operationally invisible to
+	 * the documented use case.
+	 */
+	@Authorized(PrivilegeConstants.GET_PATIENTS)
+	List<QueryDocument> getPatientChart(String patientUuid);
 }

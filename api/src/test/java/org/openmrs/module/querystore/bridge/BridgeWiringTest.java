@@ -134,6 +134,7 @@ public class BridgeWiringTest {
 			return Collections.emptyList();
 		}
 		@Override public List<QueryDocument> search(String q, int l) { return Collections.emptyList(); }
+		@Override public List<QueryDocument> getPatientChart(String patientUuid) { return Collections.emptyList(); }
 		@Override public void onStartup() { }
 		@Override public void onShutdown() { }
 	}

@@ -285,6 +285,86 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 	}
 
 	@Override
+	public List<QueryDocument> findAllByPatient(String patientUuid) {
+		if (StringUtils.isBlank(patientUuid)) {
+			return Collections.emptyList();
+		}
+		Set<String> indexNames = allIndexNames();
+		if (indexNames.isEmpty()) {
+			return Collections.emptyList();
+		}
+		TermQuery patientQuery = new TermQuery(new Term(LuceneFieldNames.PATIENT_UUID, patientUuid));
+		List<QueryDocument> all = new ArrayList<>();
+		for (String indexName : indexNames) {
+			String resourceType = BackendDocs.stripPrefix(indexName);
+			try {
+				collectAllByPatient(resourceType, patientQuery, all);
+			}
+			catch (IOException e) {
+				// One index failing should not strand the LLM caller — partial chart beats throwing.
+				// Mirrors the per-table tolerance in MysqlBackendStore.findAllByPatient and the
+				// per-index tolerance in existsByPatient: missing data converges to indexing on the
+				// next probe rather than poisoning the read path.
+				log.warn("findAllByPatient probe failed for " + indexName, e);
+			}
+		}
+		all.sort(BackendDocs.CHART_ORDER);
+		return all;
+	}
+
+	// Fields the chart consumer actually reads. EMBEDDING_STORED is deliberately excluded — the
+	// LLM full-chart path consumes text + metadata + dates and the dense_vector adds ~1.5 KB of
+	// per-doc decompression work for output that's discarded. Mirrors the MySQL findAllByPatient
+	// SELECT that omits the embedding column and the knnSingleIndex two-pass fetch that defers full
+	// stored-field decode behind heap admission. Lucene 8 stored fields share a block-compressed
+	// blob, so passing a restricted set lets the codec skip the embedding's segment of the blob.
+	private static final Set<String> CHART_LOAD_FIELDS;
+
+	static {
+		Set<String> fields = new HashSet<>();
+		fields.add(LuceneFieldNames.RESOURCE_UUID);
+		fields.add(LuceneFieldNames.PATIENT_UUID);
+		fields.add(LuceneFieldNames.RECORD_DATE);
+		fields.add(LuceneFieldNames.TEXT);
+		fields.add(LuceneFieldNames.METADATA_JSON);
+		fields.add(LuceneFieldNames.LAST_MODIFIED);
+		CHART_LOAD_FIELDS = Collections.unmodifiableSet(fields);
+	}
+
+	private void collectAllByPatient(String resourceType, TermQuery patientQuery,
+	        List<QueryDocument> sink) throws IOException {
+		IndexWriter writer = schemaManager.ensureWriter(resourceType);
+		try (DirectoryReader reader = DirectoryReader.open(writer)) {
+			IndexSearcher searcher = new IndexSearcher(reader);
+			// SimpleCollector with COMPLETE_NO_SCORES because (1) we have no ranking to apply —
+			// ADR Decision 15 sorts by record_date, not relevance — and (2) the result set is
+			// unbounded, so the alternative searcher.search(query, n) would have to allocate a
+			// PriorityQueue capacity of n up front. The collector pulls each matching doc in one
+			// pass without a heap.
+			searcher.search(patientQuery, new SimpleCollector() {
+
+				private int docBase;
+
+				@Override
+				protected void doSetNextReader(LeafReaderContext context) {
+					this.docBase = context.docBase;
+				}
+
+				@Override
+				public void collect(int doc) throws IOException {
+					Document stored = searcher.doc(docBase + doc, CHART_LOAD_FIELDS);
+					sink.add(readDocument(resourceType, stored));
+				}
+
+				@Override
+				public ScoreMode scoreMode() {
+					return ScoreMode.COMPLETE_NO_SCORES;
+				}
+			});
+		}
+	}
+
+	@Override
 	public SearchResult bm25(SearchRequest req) {
 		if (StringUtils.isBlank(req.getQueryText()) || req.getLimit() <= 0) {
 			return SearchResult.empty();

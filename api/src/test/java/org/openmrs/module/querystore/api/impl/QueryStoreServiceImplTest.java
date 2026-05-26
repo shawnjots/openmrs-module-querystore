@@ -216,6 +216,132 @@ public class QueryStoreServiceImplTest {
 		assertTrue(result.isEmpty());
 	}
 
+	// ---------- getPatientChart ----------
+
+	@Test
+	public void getPatientChart_returnsEmptyByDefault() {
+		// No backend wired (production: activator hasn't finished; tests: setBackend not called).
+		// Mirrors searchByPatient_returnsEmptyByDefault — the consumer-facing contract is "empty
+		// list, no throw" so a misconfigured deployment doesn't strand an LLM mid-prompt.
+		assertTrue(service.getPatientChart("patient-uuid").isEmpty());
+	}
+
+	@Test
+	public void getPatientChart_returnsEmptyForNullPatientUuid() {
+		FakeBackendStore backend = new FakeBackendStore(true);
+		service.setBackend(backend);
+
+		assertTrue(service.getPatientChart(null).isEmpty());
+		assertEquals("null uuid must not probe the backend", 0, backend.existsByPatientCount.get());
+		assertEquals("null uuid must not enumerate the backend", 0, backend.findAllByPatientCount.get());
+	}
+
+	@Test
+	public void getPatientChart_coldPatient_triggersEnsureIndexedOnce() {
+		// Decision 15 mirrors searchByPatient's cold-bootstrap protocol: a never-indexed patient
+		// is projected synchronously before the chart enumeration. This is the test that pins it.
+		FakeBackendStore backend = new FakeBackendStore(false);
+		RecordingBootstrapService bootstrap = new RecordingBootstrapService();
+		service.setBackend(backend);
+		service.setBootstrapServiceOverride(bootstrap);
+
+		service.getPatientChart("patient-uuid");
+
+		assertEquals(1, bootstrap.ensureIndexedCalls.size());
+		assertEquals("patient-uuid", bootstrap.ensureIndexedCalls.get(0));
+		assertEquals("backend was probed before triggering auto-index", 1, backend.existsByPatientCount.get());
+	}
+
+	@Test
+	public void getPatientChart_hotPatient_skipsEnsureIndexed() {
+		FakeBackendStore backend = new FakeBackendStore(true);
+		RecordingBootstrapService bootstrap = new RecordingBootstrapService();
+		service.setBackend(backend);
+		service.setBootstrapServiceOverride(bootstrap);
+
+		service.getPatientChart("patient-uuid");
+
+		assertTrue("ensureIndexed must not run when backend already has documents",
+		        bootstrap.ensureIndexedCalls.isEmpty());
+	}
+
+	@Test
+	public void getPatientChart_delegatesToBackendFindAllByPatient() {
+		// Locks in the SPI dispatch: the service calls backend.findAllByPatient (the unfiltered
+		// enumeration path) rather than backend.hybrid (the ranked search path). A revert that
+		// implemented getPatientChart as searchByPatient with a sentinel query string would still
+		// return rows from this fake but fail this assertion.
+		FakeBackendStore backend = new FakeBackendStore(true);
+		RecordingBootstrapService bootstrap = new RecordingBootstrapService();
+		service.setBackend(backend);
+		service.setBootstrapServiceOverride(bootstrap);
+
+		service.getPatientChart("patient-uuid");
+
+		assertEquals("service must call backend.findAllByPatient", 1, backend.findAllByPatientCount.get());
+		assertEquals("patient-uuid", backend.findAllByPatientUuids.get(0));
+		assertEquals("service must not call backend.hybrid()", 0, backend.hybridCount.get());
+		assertEquals("service must not call backend.bm25()", 0, backend.bm25Count.get());
+		assertEquals("service must not call backend.knn()", 0, backend.knnCount.get());
+	}
+
+	@Test
+	public void getPatientChart_ensureIndexedFailure_doesNotBlockReturn() {
+		// Index-failure must not block the LLM full-chart caller any more than it blocks search;
+		// whatever the backend has (possibly empty) is returned. Mirrors the searchByPatient
+		// equivalent so the failure-recovery contract is uniform across both read methods.
+		FakeBackendStore backend = new FakeBackendStore(false);
+		RecordingBootstrapService bootstrap = new RecordingBootstrapService();
+		bootstrap.onEnsureIndexed = uuid -> { throw new RuntimeException("boom"); };
+		service.setBackend(backend);
+		service.setBootstrapServiceOverride(bootstrap);
+
+		List<QueryDocument> result = service.getPatientChart("patient-uuid");
+		assertTrue(result.isEmpty());
+		assertEquals("findAllByPatient must still run after auto-index failure",
+		        1, backend.findAllByPatientCount.get());
+	}
+
+	@Test
+	public void getPatientChart_bootstrapServiceUnavailable_skipsAutoIndexQuietly() {
+		// No override and no OpenMRS Context: Context.getService throws, the ensureIndexedSafely
+		// catch absorbs the failure, and the chart enumeration still runs against whatever is
+		// indexed. Same shape as the searchByPatient equivalent.
+		FakeBackendStore backend = new FakeBackendStore(false);
+		service.setBackend(backend);
+
+		List<QueryDocument> result = service.getPatientChart("patient-uuid");
+		assertTrue(result.isEmpty());
+		assertEquals(1, backend.findAllByPatientCount.get());
+	}
+
+	@Test
+	public void getPatientChart_coldPatient_bootstrapResultFlowsThroughToReturnedChart() {
+		// End-to-end cold-bootstrap re-entry: existsByPatient probe → ensureIndexed projects →
+		// findAllByPatient sees the projection → caller receives the projected docs. The five
+		// dispatch-only tests above verify the *ordering* of the three calls, but a regression that
+		// swapped the probe-then-bootstrap-then-enumerate chain for, say, probe-then-enumerate (no
+		// bootstrap) would still satisfy them because they don't tie bootstrap's side effect to the
+		// final return. The bootstrap callback's "projection" channel is the fake's
+		// findAllByPatientReturn — assigning it from inside the RecordingBootstrapService callback
+		// simulates the real bootstrap writing to the index that the next findAllByPatient reads.
+		FakeBackendStore backend = new FakeBackendStore(false);
+		QueryDocument projected = new QueryDocument();
+		projected.setResourceUuid("projected-obs-1");
+		RecordingBootstrapService bootstrap = new RecordingBootstrapService();
+		bootstrap.onEnsureIndexed = uuid -> backend.findAllByPatientReturn = Collections.singletonList(projected);
+		service.setBackend(backend);
+		service.setBootstrapServiceOverride(bootstrap);
+
+		List<QueryDocument> chart = service.getPatientChart("patient-uuid");
+
+		assertEquals("chart must contain docs the bootstrap projected", 1, chart.size());
+		assertEquals("projected-obs-1", chart.get(0).getResourceUuid());
+		assertEquals(1, bootstrap.ensureIndexedCalls.size());
+		assertEquals(1, backend.existsByPatientCount.get());
+		assertEquals(1, backend.findAllByPatientCount.get());
+	}
+
 	// ---------- fakes ----------
 
 	private static final class FakeBackendStore implements BackendStore {
@@ -225,9 +351,13 @@ public class QueryStoreServiceImplTest {
 		final AtomicInteger bm25Count = new AtomicInteger();
 		final AtomicInteger knnCount = new AtomicInteger();
 		final AtomicInteger bulkDeleteByPatientCount = new AtomicInteger();
+		final AtomicInteger findAllByPatientCount = new AtomicInteger();
 		final java.util.List<String> bulkDeleteByPatientUuids = new java.util.ArrayList<>();
+		final java.util.List<String> findAllByPatientUuids = new java.util.ArrayList<>();
 
 		WriteResult upsertFailure;
+
+		List<QueryDocument> findAllByPatientReturn = Collections.emptyList();
 
 		FakeBackendStore(boolean existsByPatientReturn) {
 			this.existsByPatientReturn = existsByPatientReturn;
@@ -236,6 +366,12 @@ public class QueryStoreServiceImplTest {
 		@Override public boolean existsByPatient(String patientUuid) {
 			existsByPatientCount.incrementAndGet();
 			return existsByPatientReturn;
+		}
+
+		@Override public List<QueryDocument> findAllByPatient(String patientUuid) {
+			findAllByPatientCount.incrementAndGet();
+			findAllByPatientUuids.add(patientUuid);
+			return findAllByPatientReturn;
 		}
 
 		@Override public void ensureSchema(String resourceType, SchemaSpec spec) { }

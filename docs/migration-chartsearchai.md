@@ -11,6 +11,7 @@ Notes capturing what came out of the design discussion, for the team that takes 
 - Embedding model: `all-MiniLM-L6-v2` (384-dim, monolingual English, ~256-token cap).
 - Patient access gated by an "AI Query Patient Data" privilege plus OpenMRS patient access checks.
 - Best-effort sync — errors on the indexing path are logged and swallowed. Falls back to the in-process embedding pipeline if Elasticsearch is unreachable.
+- Two consumer-facing retrieval paths: the question-conditioned hybrid retrieval above (preFilter), plus a full-chart path that sends every record for a patient to the LLM unfiltered. The full-chart path is backed today by `ChartCache` / `ChartCacheInvalidator`, which serialize via `PatientRecordLoader` and invalidate on writes.
 
 ## What's structurally compatible
 
@@ -25,6 +26,7 @@ Notes capturing what came out of the design discussion, for the team that takes 
 | Voiding handling | [Decision 10](./adr.md#decision-10-voided-records--deleted-from-the-read-store-not-marked) | |
 | Encounter-scoped events | [Decision 12](./adr.md#decision-12-sync-mechanism--events-first-aop-as-last-resort-gap-filler) + gap inventory | |
 | Indexed types: obs, conditions, diagnoses, orders, allergies, programs, dispense | [Decision 6](./adr.md#decision-6-document-model--text-embeddings-and-structured-metadata) example documents | querystore is a superset (also patient, encounter, visit) |
+| Full-chart-to-LLM path (currently `ChartCache` + `PatientRecordLoader`) | `QueryStoreService.getPatientChart(patientUuid)` per [Decision 15](./adr.md#decision-15-full-chart-retrieval--unfiltered-per-patient-enumeration) | Returns every indexed document for the patient, `record_date` desc, no relevance filtering. The chartsearchai-side cache + invalidator disappear; querystore's sync pipeline keeps the data current |
 
 ## What blocks migration today
 
@@ -74,6 +76,6 @@ These are layered above the index. The migration touches retrieval (where the in
 
 1. Resolve querystore open questions 1–4 above — design and ship.
 2. chartsearchai switches its query-time embedding model to querystore's choice (test fixture and config change; small).
-3. chartsearchai swaps its retrieval layer to query `querystore_*` via the `QueryStoreService` Java surface ([Decision 14](./adr.md#decision-14-authorization-and-consumer-api-surface)) against querystore.
-4. chartsearchai removes its AOP indexing code and `chartsearchai-patient-records` index.
+3. chartsearchai swaps both retrieval paths to the `QueryStoreService` Java surface ([Decision 14](./adr.md#decision-14-authorization-and-consumer-api-surface)): the preFilter path uses `search` / `searchByPatient` against `querystore_*`; the full-chart-to-LLM path uses `getPatientChart` ([Decision 15](./adr.md#decision-15-full-chart-retrieval--unfiltered-per-patient-enumeration)).
+4. chartsearchai removes its AOP indexing code, the `chartsearchai-patient-records` index, and the `ChartCache` / `ChartCacheInvalidator` pair (the latter superseded by `getPatientChart` per Decision 15).
 5. Validate with chartsearchai's existing eval dataset (153 records, query-recall benchmarks) against the new pipeline.
