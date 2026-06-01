@@ -14,8 +14,9 @@ An OpenMRS module that maintains an optimized read-side projection of clinical d
 6. [Supported Clinical Data Types](#supported-clinical-data-types)
 7. [Extending with Custom Resource Types](#extending-with-custom-resource-types)
 8. [Text Serialization](#text-serialization)
-9. [Design Decisions](#design-decisions)
-10. [License](#license)
+9. [REST API](#rest-api)
+10. [Design Decisions](#design-decisions)
+11. [License](#license)
 
 ## Why a Query Store?
 
@@ -146,6 +147,19 @@ Example:
 Drug order: Metformin 500mg. Dose: 1.0 Tablet(s) Oral twice daily.
 Duration: 30 Day(s). Quantity: 60.0 Tablet(s). Action: NEW. Urgency: ROUTINE
 ```
+
+## REST API
+
+The query store's primary consumer surface is the in-process `QueryStoreService`. It also exposes
+two **operational** REST endpoints (under `/ws/rest/v1/querystore/`, requires the `webservices.rest`
+module) for observing and repairing index state on a live server:
+
+- `GET /indexingstatus` — per-resource-type bootstrap status and a derived `complete` flag ("is this
+  deployment fully indexed?").
+- `POST /reindex` `{"patient":"<uuid>"}` — force a full re-projection of one patient without a
+  restart (repairs a partially-indexed patient that the lazy cold-touch path won't refresh).
+
+See the [REST API reference](docs/rest-api.md) for request/response shapes, privileges, and caveats.
 
 ## Design Decisions
 
