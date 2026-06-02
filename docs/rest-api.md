@@ -3,10 +3,10 @@
 The query store's primary consumer surface is the in-process Java service
 (`QueryStoreService`); see [ADR Decision 14](./adr.md#decision-14-authorization-and-consumer-api-surface).
 These REST endpoints are **operational tooling, not the query surface** — an *observability* read
-(is this deployment fully indexed?) and an *administrative maintenance* trigger (re-index one
-patient without a restart). They exist because a deployment seeded by a SQL dump bypasses the live
-indexing bridge and depends on the background bootstrap completing, and that completion was
-otherwise unobservable and unrepairable on a live instance.
+(is this deployment fully indexed?) and *administrative maintenance* triggers (re-index one patient,
+or kick off the full backfill, without a restart). They exist because a deployment seeded by a SQL
+dump bypasses the live indexing bridge and depends on the background bootstrap completing, and that
+completion was otherwise unobservable and unrepairable on a live instance.
 
 All endpoints are served under the OpenMRS REST namespace (the module requires the
 `webservices.rest` module):
@@ -77,16 +77,18 @@ curl -s -u admin:Admin123 \
 
 ## POST `/ws/rest/v1/querystore/reindex`
 
+Re-indexes the read store in one of two scopes, selected by the request body. Both are destructive,
+expensive maintenance operations gated by **`Manage Global Properties`** (stricter than the read
+endpoint's `Get Patients`).
+
+### Per-patient — `{"patient": "<uuid>"}`
+
 Forces a full re-projection of **one patient** — deletes that patient's read-store documents and
 re-indexes every resource type from core — then reports the resulting document count. This is the
 only no-restart way to repair a **partially-indexed** patient (e.g. one whose recent records
 arrived via a SQL dump): the lazy cold-touch projection refuses such patients because they already
 have *some* documents.
 
-- **Privilege:** `Manage Global Properties` — this is a destructive, expensive maintenance
-  operation (it deletes before rebuilding), so it requires a system-administration privilege,
-  stricter than the read endpoint's `Get Patients`.
-- **Request body:** `{"patient": "<patient-uuid>"}`.
 - **Synchronous:** runs in the request thread; latency scales with the patient's record count
   (each record is re-embedded). Bounded to one patient.
 
@@ -96,31 +98,60 @@ have *some* documents.
 { "patient": "dd9836d7-1691-11df-97a5-7038c432aabf", "documentsIndexed": 154 }
 ```
 
-**Response `400`** (missing/blank `patient`):
-
-```json
-{ "error": "patient is required" }
-```
-
 ```bash
-curl -s -X POST -u admin:Admin123 \
-  -H 'Content-Type: application/json' \
+curl -s -X POST -u admin:Admin123 -H 'Content-Type: application/json' \
   -d '{"patient":"dd9836d7-1691-11df-97a5-7038c432aabf"}' \
   https://your-server/openmrs/ws/rest/v1/querystore/reindex
 ```
 
+### Global — `{"scope": "all"}`
+
+Launches the **full backfill** over every patient and resource type — the same scan the
+`querystore.bootstrap.autostart` startup path runs — on a daemon thread, and returns immediately.
+This is the no-restart way to kick off (or resume) the global bootstrap on a live, already-running
+instance; previously it could only start at module startup. Poll
+[`GET /indexingstatus`](#get-wsrestv1querystoreindexingstatus) until `complete` is `true`.
+
+- **Asynchronous:** a full-corpus scan can't run in a request thread, so the call returns `202
+  Accepted` and the work proceeds in the background. Overlapping `scope:"all"` requests collapse to
+  a single in-flight run via an in-flight guard in the launcher; even if two runs did overlap, the
+  per-resource-type locks keep the progress bookkeeping safe.
+- **Opt-in by design:** the global scope is requested *explicitly* with `scope:"all"` (matched
+  case-insensitively), never by omitting `patient` — an absent field overlaps with a malformed
+  request, and the global scan is the most expensive operation in the module.
+
+**Response `202`:**
+
+```json
+{ "accepted": true }
+```
+
+```bash
+curl -s -X POST -u admin:Admin123 -H 'Content-Type: application/json' \
+  -d '{"scope":"all"}' \
+  https://your-server/openmrs/ws/rest/v1/querystore/reindex
+```
+
+### Errors
+
+| Status | Body | When |
+|---|---|---|
+| `400` | `{"error": "patient or scope:\"all\" is required"}` | neither `patient` nor `scope` supplied |
+| `400` | `{"error": "Unknown scope '<x>'; the only supported scope is \"all\""}` | `scope` set to anything other than `all` |
+| `400` | `{"error": "Specify either patient or scope:\"all\", not both"}` | both `patient` and `scope:"all"` supplied (ambiguous) |
+| `503` | `{"error": "Cannot start reindex: the bootstrap daemon is not yet available"}` | `scope:"all"` requested while the module's daemon token is unavailable — normally a misconfiguration, since the token is wired during module startup, before the server serves requests |
+
 **Semantics & caveats:**
 
-- **Delete-before-reproject, under a per-patient lock.** The delete and re-projection are atomic
-  with respect to the lazy cold-touch projection (they share the same per-patient lock), so a
-  concurrent first-touch can't interleave with the delete.
-- **Transient partial reads.** A concurrent search for the *same* patient may briefly observe
-  partial or empty results while the rebuild is in flight (the read path's existence probe runs
-  outside the lock). The full chart is restored by the time this call returns. Avoid triggering a
-  reindex during active charting on that patient.
-- **Concurrent bridge writes converge.** A live `saveObs` (etc.) for the patient during the reindex
-  is reconciled by the version-protection invariant (newer write wins, older dropped) — no
-  corruption.
-- **Per type, not global.** This repairs one patient. To advance the *global* backfill (e.g. retry
-  a `FAILED` type after fixing its data), use the bootstrap path (`querystore.bootstrap.autostart`
-  on module start, or `BootstrapService.bootstrap(resourceType)`); it does not have a REST trigger.
+- **Delete-before-reproject, under a per-patient lock** (per-patient scope). The delete and
+  re-projection are atomic with respect to the lazy cold-touch projection (they share the same
+  per-patient lock), so a concurrent first-touch can't interleave with the delete.
+- **Transient partial reads** (per-patient scope). A concurrent search for the *same* patient may
+  briefly observe partial or empty results while the rebuild is in flight (the read path's existence
+  probe runs outside the lock). The full chart is restored by the time this call returns. Avoid
+  triggering a reindex during active charting on that patient.
+- **Concurrent bridge writes converge.** A live `saveObs` (etc.) during either scope's reindex is
+  reconciled by the version-protection invariant (newer write wins, older dropped) — no corruption.
+- **Single-type backfill.** To advance just one resource type in-process (e.g. retry a `FAILED`
+  type after fixing its data), `BootstrapService.bootstrap(resourceType)` is available on the Java
+  service; only the per-patient and `scope:"all"` triggers are exposed over REST.

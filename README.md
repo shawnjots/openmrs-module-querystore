@@ -151,13 +151,15 @@ Duration: 30 Day(s). Quantity: 60.0 Tablet(s). Action: NEW. Urgency: ROUTINE
 ## REST API
 
 The query store's primary consumer surface is the in-process `QueryStoreService`. It also exposes
-two **operational** REST endpoints (under `/ws/rest/v1/querystore/`, requires the `webservices.rest`
+**operational** REST endpoints (under `/ws/rest/v1/querystore/`, requires the `webservices.rest`
 module) for observing and repairing index state on a live server:
 
 - `GET /indexingstatus` — per-resource-type bootstrap status and a derived `complete` flag ("is this
   deployment fully indexed?").
 - `POST /reindex` `{"patient":"<uuid>"}` — force a full re-projection of one patient without a
   restart (repairs a partially-indexed patient that the lazy cold-touch path won't refresh).
+- `POST /reindex` `{"scope":"all"}` — kick off (or resume) the full backfill over every patient on a
+  daemon thread without a restart; returns `202` and runs in the background (poll `/indexingstatus`).
 
 See the [REST API reference](docs/rest-api.md) for request/response shapes, privileges, and caveats.
 
