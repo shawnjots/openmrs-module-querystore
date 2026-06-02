@@ -23,6 +23,7 @@ import org.openmrs.module.DaemonToken;
 import org.openmrs.module.querystore.api.impl.QueryStoreServiceImpl;
 import org.openmrs.module.querystore.backend.BackendStore;
 import org.openmrs.module.querystore.backend.BackendStoreSelector;
+import org.openmrs.module.querystore.bootstrap.BootstrapLauncher;
 import org.openmrs.module.querystore.bridge.AfterCommitDispatcher;
 import org.openmrs.module.querystore.model.QueryDocument;
 
@@ -131,6 +132,75 @@ public class QueryStoreActivatorTest {
 		};
 		nullToken.wireBridgeDaemonToken();
 		assertFalse("must skip dispatcher lookup when no token is wired", lookupAttempted[0]);
+	}
+
+	@Test
+	public void setDaemonToken_eagerlyPropagatesToBootstrapLauncher_whenLookupSucceeds() {
+		// The on-demand reindex endpoint (scope:"all") and bootstrap autostart both launch the
+		// global bootstrap on a daemon thread, which needs the token's UserContext. The activator
+		// must hand the token to the launcher the same way it does the bridge dispatcher.
+		BootstrapLauncher launcher = mock(BootstrapLauncher.class);
+		QueryStoreActivator capturingActivator = new QueryStoreActivator() {
+			@Override
+			BootstrapLauncher findBootstrapLauncher() {
+				return launcher;
+			}
+		};
+		DaemonToken token = new DaemonToken("token-launcher-eager");
+		capturingActivator.setDaemonToken(token);
+		verify(launcher).setDaemonToken(token);
+	}
+
+	@Test
+	public void wireBootstrapLauncherToken_propagatesAgain_afterEagerPathRan() {
+		// Mirrors the dispatcher dual-propagation contract: setDaemonToken eagerly wires the
+		// launcher, and wireBootstrapLauncherToken (from started()) wires it again as the safety
+		// net for platform versions where the eager lookup fired before Spring was refreshed.
+		BootstrapLauncher launcher = mock(BootstrapLauncher.class);
+		QueryStoreActivator activatorWithToken = new QueryStoreActivator() {
+			@Override
+			BootstrapLauncher findBootstrapLauncher() {
+				return launcher;
+			}
+		};
+		DaemonToken token = new DaemonToken("token-launcher-dual");
+		activatorWithToken.setDaemonToken(token);
+		activatorWithToken.wireBootstrapLauncherToken();
+		verify(launcher, org.mockito.Mockito.times(2)).setDaemonToken(token);
+	}
+
+	@Test
+	public void wireBootstrapLauncherToken_skipsLookup_whenTokenNull() {
+		// If started() runs before any token arrives, the activator must NOT look up the launcher
+		// and install a null token — that would mask the configuration miss behind a no-op launch.
+		final boolean[] lookupAttempted = { false };
+		QueryStoreActivator nullToken = new QueryStoreActivator() {
+			@Override
+			BootstrapLauncher findBootstrapLauncher() {
+				lookupAttempted[0] = true;
+				return mock(BootstrapLauncher.class);
+			}
+		};
+		nullToken.wireBootstrapLauncherToken();
+		assertFalse("must skip launcher lookup when no token is wired", lookupAttempted[0]);
+	}
+
+	@Test
+	public void triggerBootstrap_delegatesToTheLauncher() {
+		// Autostart used to run Daemon.runInDaemonThread(bootstrap) inline; it now delegates to the
+		// launcher so autostart and the on-demand reindex endpoint share one launch path. Pin the
+		// delegation so a refactor that drops the launchAsync() call (silently stopping autostart
+		// from bootstrapping) is caught.
+		BootstrapLauncher launcher = mock(BootstrapLauncher.class);
+		when(launcher.launchAsync()).thenReturn(Boolean.TRUE);
+		QueryStoreActivator activatorWithLauncher = new QueryStoreActivator() {
+			@Override
+			BootstrapLauncher findBootstrapLauncher() {
+				return launcher;
+			}
+		};
+		activatorWithLauncher.triggerBootstrap();
+		verify(launcher).launchAsync();
 	}
 
 	@Test

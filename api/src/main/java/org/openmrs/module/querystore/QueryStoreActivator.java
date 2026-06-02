@@ -20,7 +20,7 @@ import org.openmrs.module.DaemonTokenAware;
 import org.openmrs.module.querystore.api.impl.QueryStoreServiceImpl;
 import org.openmrs.module.querystore.backend.BackendStore;
 import org.openmrs.module.querystore.backend.BackendStoreSelector;
-import org.openmrs.module.querystore.bootstrap.BootstrapService;
+import org.openmrs.module.querystore.bootstrap.BootstrapLauncher;
 import org.openmrs.module.querystore.bridge.AfterCommitDispatcher;
 import org.openmrs.module.querystore.embedding.EmbeddingProvider;
 
@@ -43,6 +43,15 @@ public class QueryStoreActivator extends BaseModuleActivator implements DaemonTo
 		catch (RuntimeException ex) {
 			log.debug("Deferring bridge daemon-token wiring until started(); Spring not ready yet", ex);
 		}
+		// Same eager-propagate-then-retry contract for the bootstrap launcher (autostart + the
+		// on-demand reindex endpoint). Separate try so a dispatcher-lookup failure does not skip
+		// the launcher, and vice versa; started() redoes both once Spring is refreshed.
+		try {
+			findBootstrapLauncher().setDaemonToken(token);
+		}
+		catch (RuntimeException ex) {
+			log.debug("Deferring bootstrap-launcher daemon-token wiring until started(); Spring not ready yet", ex);
+		}
 	}
 
 	@Override
@@ -56,6 +65,7 @@ public class QueryStoreActivator extends BaseModuleActivator implements DaemonTo
 		// token before any AOP advice can fire. Activator owns the token (via DaemonTokenAware);
 		// the dispatcher is constructed by Spring without it, so propagation lives here.
 		wireBridgeDaemonToken();
+		wireBootstrapLauncherToken();
 		warmupQueryEmbedder();
 		if (isAutostartEnabled(Context.getAdministrationService())) {
 			triggerBootstrap();
@@ -101,6 +111,21 @@ public class QueryStoreActivator extends BaseModuleActivator implements DaemonTo
 	}
 
 	/**
+	 * Hands the daemon token to the {@link BootstrapLauncher} so bootstrap autostart and the
+	 * on-demand reindex endpoint can launch the global scan on a daemon thread. Skips the lookup
+	 * when no token has arrived — installing a null token would mask the configuration miss behind
+	 * a launcher that silently refuses to run. Mirrors {@link #wireBridgeDaemonToken()}.
+	 */
+	void wireBootstrapLauncherToken() {
+		if (daemonToken == null) {
+			log.warn("Daemon token unavailable; bootstrap autostart and the on-demand reindex"
+			        + " endpoint cannot run until the token is wired.");
+			return;
+		}
+		findBootstrapLauncher().setDaemonToken(daemonToken);
+	}
+
+	/**
 	 * Visible-for-testing seam over the static {@link Context#getRegisteredComponent} call so the
 	 * activator's two daemon-token propagation paths (eager from {@link #setDaemonToken} and
 	 * deferred from {@link #started()}) can be unit-tested without standing up a Spring context.
@@ -113,6 +138,13 @@ public class QueryStoreActivator extends BaseModuleActivator implements DaemonTo
 	AfterCommitDispatcher findBridgeDispatcher() {
 		return Context.getRegisteredComponent(
 		    "querystore.bridge.dispatcher", AfterCommitDispatcher.class);
+	}
+
+	/** Visible-for-testing seam over {@link Context#getRegisteredComponent}, mirroring
+	 *  {@link #findBridgeDispatcher()} — see its note on the package-private contract. */
+	BootstrapLauncher findBootstrapLauncher() {
+		return Context.getRegisteredComponent(
+		    "querystore.bootstrap.launcher", BootstrapLauncher.class);
 	}
 
 	/**
@@ -132,11 +164,12 @@ public class QueryStoreActivator extends BaseModuleActivator implements DaemonTo
 
 	@Override
 	public void stopped() {
-		// A daemon-thread bootstrap started on `started()` may still be running here; we don't
-		// interrupt it. The version-by-lastModified invariant (ADR Decision 3) protects the
-		// indexed documents from cross-restart races, but a fresh start that re-runs autostart
-		// could overlap the previous run's progress-table writes. Bounded risk on the progress
-		// table only; proper shutdown coordination is a follow-up if real deployments hit it.
+		// A daemon-thread bootstrap may still be running here — kicked off either by autostart on
+		// `started()` or on demand via the reindex endpoint (scope:"all") — and we don't interrupt
+		// it. The version-by-lastModified invariant (ADR Decision 3) protects the indexed documents
+		// from cross-restart races, but a fresh start that re-runs autostart could overlap the
+		// previous run's progress-table writes. Bounded risk on the progress table only; proper
+		// shutdown coordination is a follow-up if real deployments hit it.
 		log.info("Query Store module stopped");
 	}
 
@@ -148,23 +181,15 @@ public class QueryStoreActivator extends BaseModuleActivator implements DaemonTo
 	}
 
 	/**
-	 * Kicks off {@link BootstrapService#bootstrap()} in an OpenMRS daemon thread so module startup
-	 * isn't blocked by what is often a multi-hour scan on a real corpus.
-	 * {@code BootstrapServiceImpl.bootstrap()} catches per-type failures internally and never
-	 * rethrows, so the runnable doesn't wrap it in a try/catch — uncaught throws would surface via
-	 * the framework's thread-exception handler.
+	 * Kicks off the global bootstrap on an OpenMRS daemon thread (so module startup isn't blocked by
+	 * what is often a multi-hour scan) by delegating to the {@link BootstrapLauncher} — the same
+	 * path the on-demand reindex endpoint uses. The launcher returns {@code false} when no daemon
+	 * token is wired; autostart logs and skips rather than failing startup.
 	 */
-	private void triggerBootstrap() {
-		if (daemonToken == null) {
-			log.warn("Daemon token unavailable; skipping bootstrap autostart "
+	void triggerBootstrap() {
+		if (!findBootstrapLauncher().launchAsync()) {
+			log.warn("Bootstrap autostart skipped: daemon token unavailable "
 			        + "(BootstrapService.bootstrap() can still be called programmatically)");
-			return;
 		}
-		BootstrapService bootstrap = Context.getService(BootstrapService.class);
-		Daemon.runInDaemonThread(() -> {
-			log.info("Auto-bootstrap starting");
-			bootstrap.bootstrap();
-			log.info("Auto-bootstrap completed");
-		}, daemonToken);
 	}
 }

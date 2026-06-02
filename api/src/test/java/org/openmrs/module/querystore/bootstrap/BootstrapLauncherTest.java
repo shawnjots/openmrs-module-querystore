@@ -1,0 +1,136 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public License,
+ * v. 2.0. If a copy of the MPL was not distributed with this file, You can
+ * obtain one at http://mozilla.org/MPL/2.0/. OpenMRS is also distributed under
+ * the terms of the Healthcare Disclaimer located at http://openmrs.org/license.
+ *
+ * Copyright (C) OpenMRS Inc. OpenMRS is a registered trademark and the OpenMRS
+ * graphic logo is a trademark of OpenMRS Inc.
+ */
+package org.openmrs.module.querystore.bootstrap;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+import org.junit.Test;
+import org.openmrs.module.DaemonToken;
+
+/**
+ * Pins {@link BootstrapLauncher}'s daemon-token contract via its {@code DaemonExecutor} seam, so the
+ * launch handoff can be verified without spawning a real daemon thread or standing up Spring. The
+ * launched task body (which calls {@code BootstrapService.bootstrap()} through {@link
+ * org.openmrs.api.context.Context}) is deliberately NOT executed here — these tests assert that the
+ * task and token are handed to the executor, not what the task does once running; the bootstrap run
+ * itself is exercised by the autostart path and end-to-end.
+ */
+public class BootstrapLauncherTest {
+
+	@Test
+	public void launchAsync_returnsFalseAndHandsOffNothing_whenNoDaemonToken() {
+		BootstrapLauncher launcher = new BootstrapLauncher();
+		final int[] launches = { 0 };
+		launcher.setDaemonExecutor((task, token) -> launches[0]++);
+
+		// No token wired: the bootstrap reads global properties for its embedder/backend and so
+		// cannot run without the daemon-user UserContext the token provides. The launcher must
+		// refuse rather than spawn a context-less thread.
+		assertFalse(launcher.launchAsync());
+		assertEquals("must not hand any task to the daemon executor without a token", 0, launches[0]);
+	}
+
+	@Test
+	public void launchAsync_handsTaskAndWiredTokenToDaemonExecutor_whenTokenPresent() {
+		BootstrapLauncher launcher = new BootstrapLauncher();
+		final Runnable[] capturedTask = { null };
+		final DaemonToken[] capturedToken = { null };
+		final int[] launches = { 0 };
+		launcher.setDaemonExecutor((task, token) -> {
+			capturedTask[0] = task;
+			capturedToken[0] = token;
+			launches[0]++;
+		});
+		DaemonToken token = new DaemonToken("token-launch");
+		launcher.setDaemonToken(token);
+
+		assertTrue(launcher.launchAsync());
+		assertEquals(1, launches[0]);
+		assertSame("the wired token must be the one handed to the daemon thread", token, capturedToken[0]);
+		assertNotNull("a bootstrap task must be handed off to the daemon executor", capturedTask[0]);
+	}
+
+	@Test
+	public void launchAsync_collapsesOverlappingRequestsToOneInFlightBootstrap() {
+		BootstrapLauncher launcher = new BootstrapLauncher();
+		final int[] launches = { 0 };
+		// Executor that never runs the task, so the first launch stays "in flight" for the duration
+		// of the test — modelling a long-running bootstrap with a second request arriving mid-run.
+		launcher.setDaemonExecutor((task, token) -> launches[0]++);
+		launcher.setDaemonToken(new DaemonToken("token-idempotent"));
+
+		assertTrue(launcher.launchAsync());
+		assertTrue("a duplicate launch while one is in flight is still reported as accepted",
+		    launcher.launchAsync());
+		assertEquals("must not spawn a second daemon bootstrap while one is in flight", 1, launches[0]);
+	}
+
+	@Test
+	public void launchAsync_releasesInFlightFlag_afterTheTaskCompletes() {
+		BootstrapLauncher launcher = new BootstrapLauncher();
+		final int[] launches = { 0 };
+		// Run the task as a daemon thread would — execute it and isolate any throwable from the
+		// caller — so the task's finally runs and clears the in-flight flag. (The task's
+		// Context.getService lookup throws here, with no Spring context; that stands in for "the
+		// run finished" and must still release the flag.)
+		launcher.setDaemonExecutor((task, token) -> {
+			launches[0]++;
+			try {
+				task.run();
+			}
+			catch (RuntimeException isolatedLikeADaemonThread) {
+				// swallow — a real daemon thread surfaces this via the thread-exception handler,
+				// not to the launching caller
+			}
+		});
+		launcher.setDaemonToken(new DaemonToken("token-release"));
+
+		launcher.launchAsync();
+		launcher.launchAsync();
+
+		assertEquals("the flag must be released once a run completes, so the next request launches afresh",
+		    2, launches[0]);
+	}
+
+	@Test
+	public void launchAsync_releasesInFlightFlag_whenSubmissionItselfThrows() {
+		BootstrapLauncher launcher = new BootstrapLauncher();
+		final int[] attempts = { 0 };
+		// Submission fails before the task ever reaches a thread (e.g. thread-creation failure), so
+		// the task's finally cannot run — launchAsync must release the flag itself and rethrow.
+		launcher.setDaemonExecutor((task, token) -> {
+			attempts[0]++;
+			throw new IllegalStateException("thread creation failed");
+		});
+		launcher.setDaemonToken(new DaemonToken("token-submit-fail"));
+
+		try {
+			launcher.launchAsync();
+			fail("a submission failure must propagate, not be swallowed");
+		}
+		catch (IllegalStateException expected) {
+			// expected
+		}
+		try {
+			launcher.launchAsync();
+			fail("retry also throws (executor still failing) — proving the flag was released, not stuck");
+		}
+		catch (IllegalStateException expected) {
+			// expected
+		}
+		assertEquals("a stuck flag would short-circuit the retry as a duplicate; both attempts must"
+		        + " reach the executor", 2, attempts[0]);
+	}
+}

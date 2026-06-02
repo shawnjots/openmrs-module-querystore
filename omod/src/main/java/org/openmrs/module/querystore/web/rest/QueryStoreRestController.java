@@ -12,11 +12,13 @@ package org.openmrs.module.querystore.web.rest;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.commons.lang3.StringUtils;
 import org.openmrs.api.APIAuthenticationException;
 import org.openmrs.api.APIException;
 import org.openmrs.api.context.Context;
 import org.openmrs.api.context.ContextAuthenticationException;
 import org.openmrs.module.querystore.api.QueryStoreService;
+import org.openmrs.module.querystore.bootstrap.BootstrapLauncher;
 import org.openmrs.module.querystore.bootstrap.BootstrapService;
 import org.openmrs.module.querystore.bootstrap.BootstrapStatusReport;
 import org.openmrs.module.webservices.rest.web.RestConstants;
@@ -40,15 +42,19 @@ import org.springframework.web.bind.annotation.ResponseBody;
  * background bootstrap completing, and the lazy per-patient projection cannot repair an
  * already-partially-indexed patient.
  *
- * <p>It also exposes a per-patient reindex trigger so a stale/partially-indexed patient can be
- * repaired on a live instance without restarting the server (the only other no-restart path, a
- * cold-touch lazy projection, refuses to touch an already-partially-indexed patient).
+ * <p>It also exposes a reindex trigger so a stale/partially-indexed instance can be repaired without
+ * restarting the server (the only other no-restart path, a cold-touch lazy projection, refuses to
+ * touch an already-partially-indexed patient). It reindexes one patient synchronously, or — given an
+ * explicit {@code scope:"all"} — launches the global bootstrap over every patient asynchronously,
+ * since a full-corpus scan cannot run in a request thread.
  *
  * <pre>
  * GET  /ws/rest/v1/querystore/indexingstatus
  *   -&gt; {"complete": false, "types": [{"resourceType":"obs","status":"RUNNING",...}, ...]}
  * POST /ws/rest/v1/querystore/reindex   {"patient":"&lt;uuid&gt;"}
- *   -&gt; {"patient":"&lt;uuid&gt;", "documentsIndexed": 154}
+ *   -&gt; 200 {"patient":"&lt;uuid&gt;", "documentsIndexed": 154}
+ * POST /ws/rest/v1/querystore/reindex   {"scope":"all"}
+ *   -&gt; 202 {"accepted": true}   (then poll indexingstatus)
  * </pre>
  */
 @Controller
@@ -76,29 +82,66 @@ public class QueryStoreRestController {
 	}
 
 	/**
-	 * Force a full re-projection of one patient (delete + re-index every type), then report the
-	 * resulting document count. Synchronous — bounded to one patient and runs in the authenticated
-	 * request thread. The delete-before-reindex invariant lives in {@link BootstrapService#reindexPatient}
-	 * (unit-tested) so this stays a thin adapter.
+	 * Reindexes the read store, in one of two scopes selected by the request body:
+	 *
+	 * <ul>
+	 * <li>{@code {"patient":"<uuid>"}} — force a full re-projection of one patient (delete + re-index
+	 * every type), then report the resulting document count. <strong>Synchronous</strong>: bounded to
+	 * one patient and runs in the authenticated request thread. The delete-before-reindex invariant
+	 * lives in {@link BootstrapService#reindexPatient} (unit-tested) so this stays a thin adapter.</li>
+	 * <li>{@code {"scope":"all"}} — launch the global bootstrap over every patient and type.
+	 * <strong>Asynchronous</strong>: a full-corpus scan cannot run in a request thread, so it is handed
+	 * to a daemon thread via {@link BootstrapLauncher} and the call returns {@code 202 Accepted}
+	 * immediately. Progress is observed via {@code GET /querystore/indexingstatus}.</li>
+	 * </ul>
+	 *
+	 * <p>The global scope is opt-in via an explicit {@code scope:"all"} rather than "absent patient
+	 * means everything": absence overlaps with a malformed/truncated request, and resolving that
+	 * ambiguity by launching the single most expensive operation in the module is a footgun. A request
+	 * with neither {@code patient} nor {@code scope:"all"} is therefore a {@code 400}, and an
+	 * unrecognised {@code scope} is rejected rather than silently falling through.
 	 *
 	 * <p>Gated by {@code Manage Global Properties} rather than the read endpoint's {@code Get Patients}:
-	 * this is a destructive, expensive maintenance operation (it deletes the patient's documents before
-	 * rebuilding), so it requires a system-administration privilege.
+	 * both scopes are destructive/expensive maintenance operations, so they require a system-
+	 * administration privilege.
 	 *
-	 * <p>Eventual-consistency note: the delete and the re-projection run under a per-patient lock, but a
-	 * concurrent search for the <em>same</em> patient may briefly observe partial or empty results while
-	 * the rebuild is in flight (its existence probe runs outside that lock). The full chart is restored
-	 * by the time this call returns. Triggering a reindex during active charting on that patient is the
-	 * caller's call.
+	 * <p>Eventual-consistency note (per-patient scope): the delete and the re-projection run under a
+	 * per-patient lock, but a concurrent search for the <em>same</em> patient may briefly observe
+	 * partial or empty results while the rebuild is in flight (its existence probe runs outside that
+	 * lock). The full chart is restored by the time this call returns. Triggering a reindex during
+	 * active charting on that patient is the caller's call.
 	 */
 	@RequestMapping(value = "/reindex", method = RequestMethod.POST)
 	@ResponseBody
-	public ResponseEntity<Object> reindexPatient(@RequestBody Map<String, String> body) {
+	public ResponseEntity<Object> reindex(@RequestBody(required = false) Map<String, String> body) {
 		Context.requirePrivilege(PrivilegeConstants.MANAGE_GLOBAL_PROPERTIES);
 
-		String patientUuid = body == null ? null : body.get("patient");
-		if (patientUuid == null || patientUuid.trim().isEmpty()) {
-			return errorResponse(HttpStatus.BAD_REQUEST, "patient is required");
+		String scope = StringUtils.trimToNull(body == null ? null : body.get("scope"));
+		String patientUuid = StringUtils.trimToNull(body == null ? null : body.get("patient"));
+
+		if (scope != null) {
+			if (!"all".equalsIgnoreCase(scope)) {
+				return errorResponse(HttpStatus.BAD_REQUEST, "Unknown scope '" + scope + "'; the only supported scope is \"all\"");
+			}
+			if (patientUuid != null) {
+				// Ambiguous intent: a global reindex is expensive, so do not silently let scope win
+				// and ignore the patient — the caller might have meant a one-patient reindex.
+				return errorResponse(HttpStatus.BAD_REQUEST, "Specify either patient or scope:\"all\", not both");
+			}
+			boolean launched = bootstrapLauncher().launchAsync();
+			if (!launched) {
+				// No daemon token wired yet, so the async backfill cannot start. 503 rather than a
+				// misleading 202 that would imply work is underway.
+				return errorResponse(HttpStatus.SERVICE_UNAVAILABLE,
+				    "Cannot start reindex: the bootstrap daemon is not yet available");
+			}
+			Map<String, Object> result = new HashMap<String, Object>();
+			result.put("accepted", true);
+			return new ResponseEntity<Object>(result, HttpStatus.ACCEPTED);
+		}
+
+		if (patientUuid == null) {
+			return errorResponse(HttpStatus.BAD_REQUEST, "patient or scope:\"all\" is required");
 		}
 
 		Context.getService(BootstrapService.class).reindexPatient(patientUuid);
@@ -108,6 +151,22 @@ public class QueryStoreRestController {
 		result.put("patient", patientUuid);
 		result.put("documentsIndexed", documentsIndexed);
 		return new ResponseEntity<Object>(result, HttpStatus.OK);
+	}
+
+	/** Non-null only when a test injects a launcher via {@link #setBootstrapLauncher}; production
+	 *  leaves this null and resolves the singleton from the Spring context per call. */
+	private BootstrapLauncher injectedBootstrapLauncher;
+
+	/** Resolves the launcher: the test-injected one if present, else the Spring-context singleton. */
+	private BootstrapLauncher bootstrapLauncher() {
+		return injectedBootstrapLauncher != null ? injectedBootstrapLauncher
+		        : Context.getRegisteredComponent("querystore.bootstrap.launcher", BootstrapLauncher.class);
+	}
+
+	/** Visible-for-testing seam: lets the POJO controller test exercise the scope:"all" routing
+	 *  without a Spring context. Production resolves the launcher via {@link Context}. */
+	void setBootstrapLauncher(BootstrapLauncher bootstrapLauncher) {
+		this.injectedBootstrapLauncher = bootstrapLauncher;
 	}
 
 	/**

@@ -185,6 +185,9 @@
         <constructor-arg ref="querystore.embedding.dispatcher"/>
     </bean>
 
+    <bean id="querystore.bootstrap.launcher"
+          class="org.openmrs.module.querystore.bootstrap.BootstrapLauncher"/>
+
     <bean id="bootstrapService"
           class="org.openmrs.module.querystore.bootstrap.BootstrapServiceImpl">
         <property name="progressDao" ref="querystore.bootstrap.progressDao"/>
