@@ -161,6 +161,19 @@ public class BootstrappersTest {
 	}
 
 	@Test
+	public void hibernateBootstrapper_countHql_mirrorsTheScanWhere() {
+		// Drift's "expected" count must use the same WHERE the scan walks, so it counts exactly what
+		// would be indexed: SELECT count(e), voided filter, patient guard, extra orphan guards, no order.
+		String hql = HibernateTypeBootstrapper.countHql("Encounter", "e.patient.uuid");
+		assertTrue("counts, not pages", hql.startsWith("SELECT count(e) FROM Encounter e"));
+		assertTrue("voided filter present", hql.contains("WHERE e.voided = false"));
+		assertTrue("patient guard present", hql.contains("AND e.patient.uuid IS NOT NULL"));
+
+		String diag = HibernateTypeBootstrapper.countHql("Diagnosis", "e.patient.uuid", "e.encounter.uuid");
+		assertTrue("extra mandatory-eager guard counted too", diag.contains("AND e.encounter.uuid IS NOT NULL"));
+	}
+
+	@Test
 	public void hibernateBootstrapper_afterCursorHql_handlesTieBreaker() {
 		String hql = HibernateTypeBootstrapper.afterCursorHql("Encounter",
 		        "COALESCE(e.dateChanged, e.dateCreated)", "e.patient.uuid");

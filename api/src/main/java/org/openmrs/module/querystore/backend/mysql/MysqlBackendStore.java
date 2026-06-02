@@ -259,6 +259,33 @@ public class MysqlBackendStore implements BackendStore {
 	}
 
 	@Override
+	public long countByType(String resourceType) {
+		// Drift detection (ADR: Sync reliability and reconciliation). A not-yet-created per-type table
+		// is a genuine "indexed nothing" → 0; a count that errors is "unknown" → -1.
+		String table = MysqlSchemaManager.tableName(resourceType);
+		if (!schemaManager.listAllTables().contains(table)) {
+			// listAllTables() yields full table names (querystore_<type>), not bare resource types.
+			return 0L;
+		}
+		try {
+			return JdbcSupport.inTransaction(sessionFactory, conn -> {
+				try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM " + table);
+				        ResultSet rs = ps.executeQuery()) {
+					return rs.next() ? rs.getLong(1) : 0L;
+				}
+				catch (SQLException e) {
+					log.warn("countByType failed for " + resourceType, e);
+					return -1L;
+				}
+			});
+		}
+		catch (RuntimeException e) {
+			log.warn("countByType could not acquire session for " + resourceType, e);
+			return -1L;
+		}
+	}
+
+	@Override
 	public List<QueryDocument> findAllByPatient(String patientUuid) {
 		if (StringUtils.isBlank(patientUuid)) {
 			return Collections.emptyList();

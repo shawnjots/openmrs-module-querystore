@@ -196,6 +196,15 @@ public abstract class HibernateTypeBootstrapper<T> extends TypeBootstrapper<T> {
 		return cursorDate instanceof Date ? ((Date) cursorDate).toInstant() : Instant.EPOCH;
 	}
 
+	@Override
+	public long countIndexable() {
+		Class<T> entityType = getSerializer().getSupportedType();
+		Session session = sessionFactory.getHibernateSessionFactory().getCurrentSession();
+		return session.createQuery(
+		        countHql(entityType.getSimpleName(), patientAssociationExpr(), additionalNonNullExprs()),
+		        Long.class).getSingleResult();
+	}
+
 	// Package-private so a unit test can pin the HQL shape without invoking Hibernate.
 	//
 	// The "AND <patientExpr> IS NOT NULL" clause excludes rows whose patient/person FK is dangling —
@@ -221,6 +230,14 @@ public abstract class HibernateTypeBootstrapper<T> extends TypeBootstrapper<T> {
 		        + "AND " + patientExpr + " IS NOT NULL "
 		        + extraGuards(extraNonNullExprs)
 		        + "ORDER BY " + dateExpr + " ASC, e.uuid ASC";
+	}
+
+	// Drift detection's "expected" count: the same WHERE as firstPageHql (voided + patient/person guard
+	// + extra orphan guards), counted instead of paged — so it matches exactly what the scan indexes.
+	static String countHql(String entityName, String patientExpr, String... extraNonNullExprs) {
+		return "SELECT count(e) FROM " + entityName + " e WHERE e.voided = false "
+		        + "AND " + patientExpr + " IS NOT NULL "
+		        + extraGuards(extraNonNullExprs);
 	}
 
 	static String afterCursorHql(String entityName, String dateExpr, String patientExpr, String... extraNonNullExprs) {

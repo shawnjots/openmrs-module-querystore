@@ -87,6 +87,19 @@ public interface BackendStore {
 	boolean existsByPatient(String patientUuid);
 
 	/**
+	 * Returns the number of documents in the per-type store for {@code resourceType}, or {@code -1} if
+	 * this backend does not implement a count (the {@code default}). Used by drift detection (ADR: Sync
+	 * reliability and reconciliation) to compare the live index size against core's expected record
+	 * count; {@code -1} means "drift not computable for this tier" so a missing override degrades
+	 * gracefully rather than reporting a false zero. An implemented backend returns {@code 0} (not
+	 * {@code -1}) when the per-type store does not exist yet — that is a genuine "indexed nothing",
+	 * distinct from "can't count".
+	 */
+	default long countByType(String resourceType) {
+		return -1L;
+	}
+
+	/**
 	 * Returns every document keyed by {@code patient_uuid} across every per-type store, ordered by
 	 * {@code record_date} descending with {@code (resource_type, resource_uuid)} as the deterministic
 	 * tie-breaker. Backs {@code QueryStoreService.getPatientChart} per ADR Decision 15 — the

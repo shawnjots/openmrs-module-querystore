@@ -102,6 +102,22 @@ public abstract class TypeBootstrapper<T> {
 		return entity instanceof OpenmrsObject ? ((OpenmrsObject) entity).getUuid() : null;
 	}
 
+	/**
+	 * Number of core records this type's scan VISITS — counted under the same WHERE the scan walks
+	 * ({@code voided = false} + the patient/person and {@code additionalNonNullExprs} guards). This is an
+	 * UPPER BOUND on the live indexed count, not an exact target: the serializer legitimately returns
+	 * {@code null} for some visited records (e.g. obs group parents whose members carry the data, or a
+	 * value-less diagnosis), which are counted here but never indexed. Drift detection (ADR: Sync
+	 * reliability and reconciliation) therefore reads {@code countIndexable - indexedCount} as a gap to
+	 * investigate when it is large or growing, with a small stable per-type baseline expected from
+	 * null-serializing records — not as exact equality. Default {@code -1} ("unknown") for a bootstrapper
+	 * with no count story; {@link HibernateTypeBootstrapper} runs a {@code SELECT count(e)} mirroring its
+	 * fetch WHERE.
+	 */
+	public long countIndexable() {
+		return -1L;
+	}
+
 	public final void run(BootstrapProgress progress, QueryStoreService service, EmbeddingProvider embedder,
 	                      BootstrapProgressDao progressDao) {
 		progress.setStatus(BootstrapStatus.RUNNING);

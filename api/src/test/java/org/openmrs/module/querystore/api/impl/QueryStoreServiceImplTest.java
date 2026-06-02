@@ -153,6 +153,13 @@ public class QueryStoreServiceImplTest {
 		assertEquals("null results are counted as failures, not silently dropped", 2, result.getFailures().size());
 	}
 
+	@Test
+	public void backendStore_countByType_defaultsToUnknown() {
+		// A backend (or test double) that doesn't implement countByType degrades to -1 ("unknown"), so
+		// drift detection reports "not computable" for that tier rather than a false zero.
+		assertEquals(-1L, new FakeBackendStore(false).countByType("obs"));
+	}
+
 	private static QueryDocument doc(String resourceType, String resourceUuid) {
 		QueryDocument d = new QueryDocument();
 		d.setResourceType(resourceType);

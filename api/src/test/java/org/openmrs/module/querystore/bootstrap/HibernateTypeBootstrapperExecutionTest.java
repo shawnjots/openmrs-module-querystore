@@ -9,8 +9,10 @@
  */
 package org.openmrs.module.querystore.bootstrap;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 import java.util.List;
 
@@ -104,5 +106,22 @@ public class HibernateTypeBootstrapperExecutionTest extends BaseModuleContextSen
 		assertNotNull(page);
 		assertFalse("recovery HQL must load the dataset's healthy drug orders", page.entities.isEmpty());
 		assertNotNull("cursor advances to the window's last descriptor", page.nextCursorUuid);
+	}
+
+	@Test
+	public void countIndexable_runsCountHql_andEqualsTheScannedCount() throws Exception {
+		// #3 drift "expected" count: countIndexable() runs SELECT count(e) under the scan's WHERE. It
+		// must equal what the scan would actually index (one full page on the small dataset), proving
+		// the count and the fetch share the same guards.
+		executeDataSet("org/openmrs/include/standardTestDataset.xml");
+		DrugOrderBootstrapper bootstrapper =
+		        new DrugOrderBootstrapper(new DrugOrderRecordSerializer(), sessionFactory);
+
+		long expected = bootstrapper.countIndexable();
+		int scanned = bootstrapper.fetchPage(null, null, 10_000).size();
+
+		assertTrue("the dataset has drug orders", expected > 0);
+		assertEquals("countIndexable must equal what the scan indexes under the same guards",
+		        scanned, expected);
 	}
 }
