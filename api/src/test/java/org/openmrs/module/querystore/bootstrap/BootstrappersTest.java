@@ -9,6 +9,7 @@
  */
 package org.openmrs.module.querystore.bootstrap;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
@@ -92,6 +93,71 @@ public class BootstrappersTest {
 		assertTrue("obs global scan excludes dangling-person rows",
 		        HibernateTypeBootstrapper.firstPageHql("Obs", "e.dateCreated", "e.person.uuid")
 		                .contains("AND e.person.uuid IS NOT NULL"));
+	}
+
+	@Test
+	public void hibernateBootstrapper_globalScan_excludesDanglingEncounterRows_whenTypeDeclaresIt() {
+		// Diagnosis.encounter is @ManyToOne(optional=false) and eager; a SQL-dump load can leave a
+		// diagnosis with a valid patient but a dangling encounter FK. That survives the patient guard,
+		// then q.list() eager-materializes the missing encounter and FetchNotFoundException fails the
+		// WHOLE diagnosis type. The extra guard forces the inner join that drops the orphan at fetch,
+		// alongside the patient guard. Without it, only the patient guard would be present here.
+		String first = HibernateTypeBootstrapper.firstPageHql("Diagnosis",
+		        "COALESCE(e.dateChanged, e.dateCreated)", "e.patient.uuid", "e.encounter.uuid");
+		assertTrue("patient guard retained", first.contains("AND e.patient.uuid IS NOT NULL"));
+		assertTrue("encounter guard added", first.contains("AND e.encounter.uuid IS NOT NULL"));
+
+		String after = HibernateTypeBootstrapper.afterCursorHql("Diagnosis",
+		        "COALESCE(e.dateChanged, e.dateCreated)", "e.patient.uuid", "e.encounter.uuid");
+		assertTrue("encounter guard added", after.contains("AND e.encounter.uuid IS NOT NULL"));
+		assertTrue("guard precedes the cursor group", after.contains("IS NOT NULL AND ("));
+	}
+
+	@Test
+	public void hibernateBootstrapper_perPatientScan_excludesDanglingEncounterRows_whenTypeDeclaresIt() {
+		// reindexPatient (per-patient path) also eager-materializes the encounter, so the same orphan
+		// would fail a single-patient reindex without the guard on this path too.
+		String first = HibernateTypeBootstrapper.firstPagePerPatientHql("Diagnosis",
+		        "COALESCE(e.dateChanged, e.dateCreated)", "e.patient.uuid", "e.encounter.uuid");
+		assertTrue("patient scope retained", first.contains("AND e.patient.uuid = :patientUuid"));
+		assertTrue("encounter guard added", first.contains("AND e.encounter.uuid IS NOT NULL"));
+
+		String after = HibernateTypeBootstrapper.afterCursorPerPatientHql("Diagnosis",
+		        "COALESCE(e.dateChanged, e.dateCreated)", "e.patient.uuid", "e.encounter.uuid");
+		assertTrue("encounter guard added", after.contains("AND e.encounter.uuid IS NOT NULL"));
+	}
+
+	@Test
+	public void diagnosisBootstrapper_guardsDanglingEncounterFk() {
+		// The diagnosis type FAILED on the demo with FetchNotFoundException for a missing Encounter;
+		// it declares the encounter association as an extra orphan guard so a dump-orphaned encounter
+		// no longer fails the whole type. Diagnosis.encounter is @ManyToOne(optional=false), eager.
+		assertArrayEquals(new String[] { "e.encounter.uuid" },
+		        new DiagnosisBootstrapper(new DiagnosisRecordSerializer(), null).additionalNonNullExprs());
+	}
+
+	@Test
+	public void orderBootstrappers_guardDanglingEncounterFk() {
+		// Order.encounter is not-null + eager (Order.hbm.xml), inherited by all three order subtypes,
+		// so they share diagnosis's exact latent failure: a dump-orphaned order-encounter would fail
+		// the whole type. They didn't trip on the current demo dump only because it had no such orphan.
+		assertArrayEquals(new String[] { "e.encounter.uuid" },
+		        new DrugOrderBootstrapper(new DrugOrderRecordSerializer(), null).additionalNonNullExprs());
+		assertArrayEquals(new String[] { "e.encounter.uuid" },
+		        new TestOrderBootstrapper(new TestOrderRecordSerializer(), null).additionalNonNullExprs());
+		assertArrayEquals(new String[] { "e.encounter.uuid" },
+		        new ReferralOrderBootstrapper(new ReferralOrderRecordSerializer(), null).additionalNonNullExprs());
+	}
+
+	@Test
+	public void types_with_nullable_or_no_encounter_declare_no_additionalNonNullExprs() {
+		// The guard is IS-NOT-NULL (drops only orphans of a MANDATORY association). It must NOT be
+		// applied where encounter is nullable, or it would drop legitimate null-encounter records:
+		// Obs.encounter (Obs.hbm.xml, no not-null), Condition.encounter (optional=true). Encounter is
+		// itself the entity (no encounter association). All rely on the patient/person guard alone.
+		assertEquals(0, new EncounterBootstrapper(new EncounterRecordSerializer(), null).additionalNonNullExprs().length);
+		assertEquals(0, new ObsBootstrapper(new ObsRecordSerializer(), null).additionalNonNullExprs().length);
+		assertEquals(0, new ConditionBootstrapper(new ConditionRecordSerializer(), null).additionalNonNullExprs().length);
 	}
 
 	@Test

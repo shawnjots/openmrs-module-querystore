@@ -33,4 +33,11 @@ public class DrugOrderBootstrapper extends HibernateTypeBootstrapper<DrugOrder> 
 		// Order.hbm.xml does not map dateChanged; cursor uses dateCreated alone.
 		return "e.dateCreated";
 	}
+
+	@Override
+	protected String[] additionalNonNullExprs() {
+		// Order.encounter is not-null + eager (Order.hbm.xml) — same orphan guard as Diagnosis; see
+		// additionalNonNullExprs(). Without it a dump-orphaned encounter FK fails the whole type.
+		return new String[] { "e.encounter.uuid" };
+	}
 }

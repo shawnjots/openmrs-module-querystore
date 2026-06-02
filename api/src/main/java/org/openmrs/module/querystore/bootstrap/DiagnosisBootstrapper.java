@@ -27,4 +27,17 @@ public class DiagnosisBootstrapper extends HibernateTypeBootstrapper<Diagnosis> 
 	protected ClinicalRecordSerializer<Diagnosis> getSerializer() {
 		return serializer;
 	}
+
+	/**
+	 * {@link org.openmrs.Diagnosis#getEncounter() Diagnosis.encounter} is
+	 * {@code @ManyToOne(optional=false)} and eagerly fetched, so a SQL-dump load that leaves a
+	 * diagnosis pointing at a missing encounter makes {@code q.list()} throw
+	 * {@code FetchNotFoundException} and fail the ENTIRE diagnosis type — the patient guard doesn't
+	 * cover the encounter FK. Guarding it forces the inner join that drops the orphaned diagnosis at
+	 * fetch instead. (Observed on the demo: {@code FetchNotFoundException: Encounter 767 does not exist}.)
+	 */
+	@Override
+	protected String[] additionalNonNullExprs() {
+		return new String[] { "e.encounter.uuid" };
+	}
 }

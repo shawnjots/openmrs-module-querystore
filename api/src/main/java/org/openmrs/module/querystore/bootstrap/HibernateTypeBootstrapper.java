@@ -60,6 +60,23 @@ public abstract class HibernateTypeBootstrapper<T> extends TypeBootstrapper<T> {
 		return "e.patient.uuid";
 	}
 
+	/**
+	 * Nav-expressions (e.g. {@code "e.encounter.uuid"}) for MANDATORY eager to-one associations
+	 * beyond the patient/person scope that a SQL-dump load can leave dangling. Each is applied as an
+	 * {@code AND <expr> IS NOT NULL} guard (see {@link #firstPageHql}), forcing the inner join that
+	 * drops the orphaned row at fetch instead of letting {@code q.list()} eager-materialize a missing
+	 * association and throw {@code FetchNotFoundException} — which fails the whole type, since the
+	 * per-record skip in {@code projectOne} can't catch a failure that happens at page fetch.
+	 *
+	 * <p>Default none: the patient/person guard already covers the common dump orphan. Override for a
+	 * type with an additional non-null eager association — e.g. {@link org.openmrs.Diagnosis}, whose
+	 * {@code encounter} is {@code @ManyToOne(optional=false)} and eager. Only {@code optional=false}
+	 * associations belong here, so the guard never drops a legitimately-null association.
+	 */
+	protected String[] additionalNonNullExprs() {
+		return new String[0];
+	}
+
 	@Override
 	protected final List<T> fetchPage(Instant afterDateChanged, String afterUuid, int pageSize) {
 		Class<T> entityType = getSerializer().getSupportedType();
@@ -69,11 +86,12 @@ public abstract class HibernateTypeBootstrapper<T> extends TypeBootstrapper<T> {
 		// createQuery returns the legacy raw type.
 		String patientExpr = patientAssociationExpr();
 		Session session = sessionFactory.getHibernateSessionFactory().getCurrentSession();
+		String[] extra = additionalNonNullExprs();
 		Query<T> q;
 		if (afterDateChanged == null) {
-			q = session.createQuery(firstPageHql(entityName, dateExpr, patientExpr), entityType);
+			q = session.createQuery(firstPageHql(entityName, dateExpr, patientExpr, extra), entityType);
 		} else {
-			q = session.createQuery(afterCursorHql(entityName, dateExpr, patientExpr), entityType);
+			q = session.createQuery(afterCursorHql(entityName, dateExpr, patientExpr, extra), entityType);
 			q.setParameter("cursor", Date.from(afterDateChanged));
 			q.setParameter("afterUuid", afterUuid != null ? afterUuid : "");
 		}
@@ -89,11 +107,12 @@ public abstract class HibernateTypeBootstrapper<T> extends TypeBootstrapper<T> {
 		String dateExpr = cursorDateExpr();
 		String patientExpr = patientAssociationExpr();
 		Session session = sessionFactory.getHibernateSessionFactory().getCurrentSession();
+		String[] extra = additionalNonNullExprs();
 		Query<T> q;
 		if (afterDateChanged == null) {
-			q = session.createQuery(firstPagePerPatientHql(entityName, dateExpr, patientExpr), entityType);
+			q = session.createQuery(firstPagePerPatientHql(entityName, dateExpr, patientExpr, extra), entityType);
 		} else {
-			q = session.createQuery(afterCursorPerPatientHql(entityName, dateExpr, patientExpr), entityType);
+			q = session.createQuery(afterCursorPerPatientHql(entityName, dateExpr, patientExpr, extra), entityType);
 			q.setParameter("cursor", Date.from(afterDateChanged));
 			q.setParameter("afterUuid", afterUuid != null ? afterUuid : "");
 		}
@@ -113,33 +132,63 @@ public abstract class HibernateTypeBootstrapper<T> extends TypeBootstrapper<T> {
 	// the same reason (it navigates the same expr via "= :patientUuid"); this brings the global scan
 	// to parity. Orphan rows are unindexable anyway (no patient to scope them to), so excluding them
 	// is the correct "skip the bad record" behavior.
-	static String firstPageHql(String entityName, String dateExpr, String patientExpr) {
+	//
+	// extraNonNullExprs applies the SAME inner-join orphan guard to ADDITIONAL mandatory eager to-one
+	// associations a type declares via additionalNonNullExprs() — e.g. Diagnosis.encounter
+	// (@ManyToOne(optional=false), eager). A diagnosis with a valid patient but a dangling encounter FK
+	// survives the patient guard, then q.list() eager-materializes the missing encounter and throws
+	// FetchNotFoundException, failing the whole type. Navigating each extra expr forces the inner join
+	// that drops it too. Only optional=false associations belong here, so the guard never drops a
+	// legitimately-null one. Zero extras leaves the HQL byte-for-byte as the patient-guard-only form.
+	static String firstPageHql(String entityName, String dateExpr, String patientExpr, String... extraNonNullExprs) {
 		return "FROM " + entityName + " e WHERE e.voided = false "
 		        + "AND " + patientExpr + " IS NOT NULL "
+		        + extraGuards(extraNonNullExprs)
 		        + "ORDER BY " + dateExpr + " ASC, e.uuid ASC";
 	}
 
-	static String afterCursorHql(String entityName, String dateExpr, String patientExpr) {
+	static String afterCursorHql(String entityName, String dateExpr, String patientExpr, String... extraNonNullExprs) {
 		// COALESCE in WHERE so a record whose dateChanged is null still progresses past the cursor on
 		// dateCreated alone; the uuid tie-breaker handles records sharing the same effective timestamp.
 		return "FROM " + entityName + " e WHERE e.voided = false "
-		        + "AND " + patientExpr + " IS NOT NULL AND ("
+		        + "AND " + patientExpr + " IS NOT NULL "
+		        + extraGuards(extraNonNullExprs)
+		        + "AND ("
 		        + dateExpr + " > :cursor "
 		        + "OR (" + dateExpr + " = :cursor AND e.uuid > :afterUuid)) "
 		        + "ORDER BY " + dateExpr + " ASC, e.uuid ASC";
 	}
 
-	static String firstPagePerPatientHql(String entityName, String dateExpr, String patientExpr) {
+	static String firstPagePerPatientHql(String entityName, String dateExpr, String patientExpr, String... extraNonNullExprs) {
 		return "FROM " + entityName + " e WHERE e.voided = false "
 		        + "AND " + patientExpr + " = :patientUuid "
+		        + extraGuards(extraNonNullExprs)
 		        + "ORDER BY " + dateExpr + " ASC, e.uuid ASC";
 	}
 
-	static String afterCursorPerPatientHql(String entityName, String dateExpr, String patientExpr) {
+	static String afterCursorPerPatientHql(String entityName, String dateExpr, String patientExpr, String... extraNonNullExprs) {
 		return "FROM " + entityName + " e WHERE e.voided = false "
-		        + "AND " + patientExpr + " = :patientUuid AND ("
+		        + "AND " + patientExpr + " = :patientUuid "
+		        + extraGuards(extraNonNullExprs)
+		        + "AND ("
 		        + dateExpr + " > :cursor "
 		        + "OR (" + dateExpr + " = :cursor AND e.uuid > :afterUuid)) "
 		        + "ORDER BY " + dateExpr + " ASC, e.uuid ASC";
+	}
+
+	/** Builds the additional {@code AND <expr> IS NOT NULL} orphan guards declared by
+	 *  {@link #additionalNonNullExprs()}. Each navigates a mandatory eager to-one association so a
+	 *  dangling FK is dropped by the forced inner join at fetch, rather than throwing
+	 *  FetchNotFoundException (which fails the whole type). Empty input yields the empty string so the
+	 *  patient-guard-only HQL is unchanged. */
+	private static String extraGuards(String[] extraNonNullExprs) {
+		if (extraNonNullExprs == null || extraNonNullExprs.length == 0) {
+			return "";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (String expr : extraNonNullExprs) {
+			sb.append("AND ").append(expr).append(" IS NOT NULL ");
+		}
+		return sb.toString();
 	}
 }
