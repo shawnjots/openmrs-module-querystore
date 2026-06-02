@@ -141,6 +141,19 @@ public class LuceneBackendStoreTest {
 	}
 
 	@Test
+	public void countByType_countsIndexedDocs_andZeroForUnpopulatedType() {
+		// #3 drift "indexed" count: live per-type doc count, 0 for a type with no docs (distinct from
+		// the SPI default's -1 "can't count").
+		backend.upsert(doc("obs", "patient-A", "Glucose 5.1", null));
+		backend.upsert(doc("obs", "patient-B", "Glucose 6.0", null));
+		backend.upsert(doc("condition", "patient-A", "Asthma", null));
+
+		assertEquals(2L, backend.countByType("obs"));
+		assertEquals(1L, backend.countByType("condition"));
+		assertEquals("a type with no indexed docs counts 0, not -1", 0L, backend.countByType("visit"));
+	}
+
+	@Test
 	public void deleteRemovesDocument() {
 		QueryDocument doc = doc("obs", "patient-A", "Pulse 72 bpm", null);
 		backend.upsert(doc);

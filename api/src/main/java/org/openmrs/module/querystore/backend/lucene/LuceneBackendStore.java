@@ -285,6 +285,31 @@ public class LuceneBackendStore implements BackendStore, Closeable {
 	}
 
 	@Override
+	public long countByType(String resourceType) {
+		// Drift detection (ADR: Sync reliability and reconciliation). No index for this type yet →
+		// indexed nothing (0); a count that errors → unknown (-1). Don't create a writer for a type
+		// with no index — only count types that already exist.
+		boolean exists = false;
+		for (String indexName : allIndexNames()) {
+			if (resourceType.equals(BackendDocs.stripPrefix(indexName))) {
+				exists = true;
+				break;
+			}
+		}
+		if (!exists) {
+			return 0L;
+		}
+		IndexWriter writer = schemaManager.ensureWriter(resourceType);
+		try {
+			return countMatching(writer, new MatchAllDocsQuery());
+		}
+		catch (IOException e) {
+			log.warn("countByType failed for " + resourceType, e);
+			return -1L;
+		}
+	}
+
+	@Override
 	public List<QueryDocument> findAllByPatient(String patientUuid) {
 		if (StringUtils.isBlank(patientUuid)) {
 			return Collections.emptyList();

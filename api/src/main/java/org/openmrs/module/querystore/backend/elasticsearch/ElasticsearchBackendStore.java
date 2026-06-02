@@ -356,6 +356,32 @@ public class ElasticsearchBackendStore implements BackendStore, Closeable {
 	}
 
 	@Override
+	public long countByType(String resourceType) {
+		// Drift detection (ADR: Sync reliability and reconciliation). allowNoIndices/ignoreUnavailable
+		// give "no index yet → 0" consistent with the other backends; a real error → unknown (-1).
+		String index = ElasticsearchSchemaManager.indexName(resourceType);
+		try {
+			co.elastic.clients.elasticsearch.core.CountResponse resp = client().count(c -> c
+			        .index(index)
+			        .query(Query.of(q -> q.matchAll(m -> m)))
+			        .allowNoIndices(true)
+			        .ignoreUnavailable(true));
+			return resp.count();
+		}
+		catch (ElasticsearchException e) {
+			if (e.status() == 404 || "index_not_found_exception".equals(e.error().type())) {
+				return 0L;
+			}
+			log.warn("countByType failed for " + resourceType, e);
+			return -1L;
+		}
+		catch (IOException e) {
+			log.warn("countByType failed for " + resourceType, e);
+			return -1L;
+		}
+	}
+
+	@Override
 	public SearchResult bm25(SearchRequest req) {
 		if (StringUtils.isBlank(req.getQueryText()) || req.getLimit() <= 0) {
 			return SearchResult.empty();
