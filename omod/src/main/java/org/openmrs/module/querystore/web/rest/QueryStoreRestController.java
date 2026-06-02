@@ -144,9 +144,9 @@ public class QueryStoreRestController {
 			return errorResponse(HttpStatus.BAD_REQUEST, "patient or scope:\"all\" is required");
 		}
 
-		Context.getService(BootstrapService.class).reindexPatient(patientUuid);
+		bootstrapService().reindexPatient(patientUuid);
 
-		int documentsIndexed = Context.getService(QueryStoreService.class).getPatientChart(patientUuid).size();
+		int documentsIndexed = queryStoreService().getPatientChart(patientUuid).size();
 		Map<String, Object> result = new HashMap<String, Object>();
 		result.put("patient", patientUuid);
 		result.put("documentsIndexed", documentsIndexed);
@@ -167,6 +167,33 @@ public class QueryStoreRestController {
 	 *  without a Spring context. Production resolves the launcher via {@link Context}. */
 	void setBootstrapLauncher(BootstrapLauncher bootstrapLauncher) {
 		this.injectedBootstrapLauncher = bootstrapLauncher;
+	}
+
+	/** Non-null only when a test injects collaborators; production leaves these null and resolves
+	 *  the services from the Spring context per call (keeping the controller a thin adapter). */
+	private BootstrapService injectedBootstrapService;
+
+	private QueryStoreService injectedQueryStoreService;
+
+	private BootstrapService bootstrapService() {
+		return injectedBootstrapService != null ? injectedBootstrapService
+		        : Context.getService(BootstrapService.class);
+	}
+
+	private QueryStoreService queryStoreService() {
+		return injectedQueryStoreService != null ? injectedQueryStoreService
+		        : Context.getService(QueryStoreService.class);
+	}
+
+	/** Visible-for-testing seams: let the POJO controller test exercise the per-patient routing and
+	 *  response contract without a Spring context (the real reindex round-trip is covered by
+	 *  BootstrapServiceImplTest). Production resolves both services via {@link Context}. */
+	void setBootstrapService(BootstrapService bootstrapService) {
+		this.injectedBootstrapService = bootstrapService;
+	}
+
+	void setQueryStoreService(QueryStoreService queryStoreService) {
+		this.injectedQueryStoreService = queryStoreService;
 	}
 
 	/**

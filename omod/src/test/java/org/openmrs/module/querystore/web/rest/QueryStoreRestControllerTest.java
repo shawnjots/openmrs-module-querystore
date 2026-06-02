@@ -11,7 +11,11 @@ package org.openmrs.module.querystore.web.rest;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -23,7 +27,10 @@ import org.openmrs.api.APIAuthenticationException;
 import org.openmrs.api.context.Context;
 import org.openmrs.api.context.ContextAuthenticationException;
 import org.openmrs.api.context.UserContext;
+import org.openmrs.module.querystore.api.QueryStoreService;
 import org.openmrs.module.querystore.bootstrap.BootstrapLauncher;
+import org.openmrs.module.querystore.bootstrap.BootstrapService;
+import org.openmrs.module.querystore.model.QueryDocument;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -191,6 +198,34 @@ public class QueryStoreRestControllerTest {
 		ResponseEntity<Object> response = controller.reindex(Collections.singletonMap("scope", "   "));
 		assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
 		assertEquals("a blank scope must not launch a global reindex", 0, launcher.launches);
+	}
+
+	@Test
+	public void reindex_withPatient_reprojectsThatPatientAndReturnsTheDocumentCount() {
+		authenticate();
+		// Adapter contract: a per-patient body reprojects that one patient (not a global launch) and
+		// reports the resulting chart size. The reproject round-trip itself is covered by
+		// BootstrapServiceImplTest; here we pin the controller's routing + response shaping with the
+		// services stubbed, since omod has no DB-backed context-test harness.
+		BootstrapService bootstrap = mock(BootstrapService.class);
+		QueryStoreService queryStore = mock(QueryStoreService.class);
+		when(queryStore.getPatientChart("patient-uuid"))
+		        .thenReturn(Arrays.asList(new QueryDocument(), new QueryDocument(), new QueryDocument()));
+		controller.setBootstrapService(bootstrap);
+		controller.setQueryStoreService(queryStore);
+		// Inject a launcher too, only to prove the per-patient path never touches it (routing isolation).
+		RecordingLauncher launcher = new RecordingLauncher(true);
+		controller.setBootstrapLauncher(launcher);
+
+		ResponseEntity<Object> response = controller.reindex(Collections.singletonMap("patient", "patient-uuid"));
+
+		assertEquals(HttpStatus.OK, response.getStatusCode());
+		Map<?, ?> body = (Map<?, ?>) response.getBody();
+		assertEquals("patient-uuid", body.get("patient"));
+		assertEquals("documentsIndexed must report the reprojected chart's size", Integer.valueOf(3),
+		    body.get("documentsIndexed"));
+		verify(bootstrap).reindexPatient("patient-uuid");
+		assertEquals("a per-patient reindex must not also launch a global bootstrap", 0, launcher.launches);
 	}
 
 	/** Authenticates the thread with a user that holds every privilege, so the controller's
