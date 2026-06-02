@@ -37,7 +37,8 @@ import org.openmrs.module.querystore.serialization.ClinicalRecordSerializer;
  * {@link #getResourceType}, {@link #getDateChanged}, and {@link #getUuid} default off the serializer
  * and the {@link BaseOpenmrsData}/{@link OpenmrsObject} contracts and only need overriding for
  * exotic types. The {@link #run} loop persists the cursor after each page so an interrupted scan
- * resumes without re-projecting.
+ * resumes without re-projecting; a page whose bulk fetch hits a dump-orphaned dangling FK is
+ * recovered per-row via {@link #fetchPageSkippingPoison} instead of failing the whole type.
  */
 public abstract class TypeBootstrapper<T> {
 
@@ -166,16 +167,50 @@ public abstract class TypeBootstrapper<T> {
 	}
 
 	/**
-	 * Fetches the next page as a {@link PageResult} carrying the page plus the cursor to resume after it
-	 * (the last record's effective date + uuid). Returns {@code null} when the scan is exhausted.
+	 * Fetches the next page, recovering from a poison page. The fast path is the bulk {@link #fetchPage}
+	 * query; if it throws — typically a dangling FK that Hibernate eager-materializes during the
+	 * paginated {@code q.list()} and that no per-record skip can catch, since the failure precedes
+	 * projection — it logs and delegates to {@link #fetchPageSkippingPoison}, which skips the orphan and
+	 * advances the cursor past it. Returns {@code null} when the scan is exhausted (an all-poison window
+	 * returns a non-null result with empty entities and an advanced cursor, so the scan continues).
+	 *
+	 * <p>The catch is deliberately broad (any {@code RuntimeException}, not just the orphan exception):
+	 * a genuinely transient or infrastructural failure re-surfaces in the fallback's own descriptor query
+	 * and propagates to {@link #run}'s catch as FAILED (re-runnable), so only rows that are individually
+	 * unloadable — the actual orphans — are skipped. The fallback is the Hibernate subclass's recovery;
+	 * the base default rethrows, preserving the original failure for types with no per-row story.
 	 */
 	private PageResult<T> nextPage(Instant cursor, String cursorUuid, int pageSize) {
-		List<T> fast = fetchPage(cursor, cursorUuid, pageSize);
+		List<T> fast;
+		try {
+			fast = fetchPage(cursor, cursorUuid, pageSize);
+		}
+		catch (RuntimeException e) {
+			log.warn("Page fetch failed for " + getResourceType() + " at cursor " + cursor + "/" + cursorUuid
+			        + "; falling back to per-row fetch to skip dump-orphaned record(s)", e);
+			return fetchPageSkippingPoison(cursor, cursorUuid, pageSize, e);
+		}
 		if (fast.isEmpty()) {
 			return null;
 		}
 		T last = fast.get(fast.size() - 1);
 		return new PageResult<T>(fast, getDateChanged(last), getUuid(last));
+	}
+
+	/**
+	 * Poison-page recovery: invoked when {@link #fetchPage} throws because a row's eager association is a
+	 * dangling FK a SQL-dump load left behind. The default rethrows {@code pageFetchError} — a backend
+	 * with no per-row recovery has no way to identify the poison row and advance past it, so it preserves
+	 * the original failure. {@link HibernateTypeBootstrapper} overrides to fetch {@code (uuid, date)}
+	 * projections (a scalar select does not hydrate associations, so the orphan can't throw), load each
+	 * entity individually skipping the ones that throw, and advance the cursor to the end of the window.
+	 *
+	 * @param pageFetchError the exception {@link #fetchPage} threw, rethrown by the default
+	 * @return the window's loadable entities plus the next cursor, or {@code null} when exhausted
+	 */
+	protected PageResult<T> fetchPageSkippingPoison(Instant afterDateChanged, String afterUuid, int pageSize,
+	                                                RuntimeException pageFetchError) {
+		throw pageFetchError;
 	}
 
 	/** Serialize + embed every entity in the page and write the resulting documents in one

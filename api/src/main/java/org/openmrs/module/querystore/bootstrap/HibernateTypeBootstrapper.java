@@ -10,12 +10,16 @@
 package org.openmrs.module.querystore.bootstrap;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.hibernate.Session;
 import org.hibernate.query.Query;
 import org.openmrs.api.db.hibernate.DbSessionFactory;
+import org.openmrs.module.querystore.SkipLogFormat;
 
 /**
  * {@link TypeBootstrapper} implementation that fetches pages via HQL against core's session. The
@@ -26,6 +30,8 @@ import org.openmrs.api.db.hibernate.DbSessionFactory;
  * {@code getSerializer().getSupportedType().getSimpleName()}.
  */
 public abstract class HibernateTypeBootstrapper<T> extends TypeBootstrapper<T> {
+
+	private static final Log log = LogFactory.getLog(HibernateTypeBootstrapper.class);
 
 	private final DbSessionFactory sessionFactory;
 
@@ -66,7 +72,8 @@ public abstract class HibernateTypeBootstrapper<T> extends TypeBootstrapper<T> {
 	 * {@code AND <expr> IS NOT NULL} guard (see {@link #firstPageHql}), forcing the inner join that
 	 * drops the orphaned row at fetch instead of letting {@code q.list()} eager-materialize a missing
 	 * association and throw {@code FetchNotFoundException} — which fails the whole type, since the
-	 * per-record skip in {@code projectOne} can't catch a failure that happens at page fetch.
+	 * per-record skip in {@code serializeAndEmbed} can't catch a failure that happens at page fetch
+	 * (the poison-page fallback in {@link TypeBootstrapper#fetchPageSkippingPoison} is what recovers it).
 	 *
 	 * <p>Default none: the patient/person guard already covers the common dump orphan. Override for a
 	 * type with an additional non-null eager association — e.g. {@link org.openmrs.Diagnosis}, whose
@@ -121,14 +128,83 @@ public abstract class HibernateTypeBootstrapper<T> extends TypeBootstrapper<T> {
 		return q.list();
 	}
 
+	/**
+	 * Poison-page recovery for the global scan. The inner-join guards ({@code patient.uuid},
+	 * {@code encounter.uuid}) already drop the orphans they cover, so this fires only for a dangling FK
+	 * NOT covered by a guard — a nullable association with a non-null-but-missing target, or a mandatory
+	 * metadata FK ({@code Obs.concept}) — which {@link #fetchPage}'s {@code q.list()} eager-materializes
+	 * and throws on. Strategy: select {@code (uuid, cursorDate)} as a SCALAR projection (Hibernate does
+	 * not hydrate associations for a projection, so the dangling FK can't throw here), then load each
+	 * entity individually by uuid; the poison row throws on its own load and is skipped, while its
+	 * descriptor still advances the cursor so the scan moves past it. The window's last descriptor is the
+	 * next cursor even when every row in it was poison, so an all-orphan window cannot loop forever.
+	 */
+	@Override
+	protected PageResult<T> fetchPageSkippingPoison(Instant afterDateChanged, String afterUuid, int pageSize,
+	                                                RuntimeException pageFetchError) {
+		Class<T> entityType = getSerializer().getSupportedType();
+		String entityName = entityType.getSimpleName();
+		String dateExpr = cursorDateExpr();
+		String patientExpr = patientAssociationExpr();
+		String[] extra = additionalNonNullExprs();
+		Session session = sessionFactory.getHibernateSessionFactory().getCurrentSession();
+
+		Query<Object[]> dq;
+		if (afterDateChanged == null) {
+			dq = session.createQuery("SELECT e.uuid, " + dateExpr + " "
+			        + firstPageHql(entityName, dateExpr, patientExpr, extra), Object[].class);
+		} else {
+			dq = session.createQuery("SELECT e.uuid, " + dateExpr + " "
+			        + afterCursorHql(entityName, dateExpr, patientExpr, extra), Object[].class);
+			dq.setParameter("cursor", Date.from(afterDateChanged));
+			dq.setParameter("afterUuid", afterUuid != null ? afterUuid : "");
+		}
+		dq.setMaxResults(pageSize);
+		List<Object[]> descriptors = dq.list();
+		if (descriptors.isEmpty()) {
+			// The bulk fetch threw but this window holds no rows to hydrate — so the failure wasn't a
+			// poison row (more likely a DB/HQL error). Surface the original rather than finishing silently.
+			throw pageFetchError;
+		}
+
+		List<T> loaded = new ArrayList<T>(descriptors.size());
+		int skipped = 0;
+		for (Object[] descriptor : descriptors) {
+			String uuid = (String) descriptor[0];
+			try {
+				T entity = session.createQuery("FROM " + entityName + " e WHERE e.uuid = :uuid", entityType)
+				        .setParameter("uuid", uuid).uniqueResult();
+				if (entity != null) {
+					loaded.add(entity);
+				}
+			}
+			catch (RuntimeException rowError) {
+				skipped++;
+				log.warn(SkipLogFormat.format("bootstrap", getResourceType(), uuid, null,
+				        "skipped dump-orphaned record (dangling FK): " + rowError.getMessage()), rowError);
+			}
+		}
+		Object[] last = descriptors.get(descriptors.size() - 1);
+		log.warn("Poison-page recovery for " + getResourceType() + ": loaded " + loaded.size() + ", skipped "
+		        + skipped + " orphan(s) of " + descriptors.size() + " in window");
+		return new PageResult<T>(loaded, toInstant(last[1]), (String) last[0]);
+	}
+
+	/** Converts the cursor-date column of a descriptor projection to an {@link Instant}; null/foreign
+	 *  types fall back to {@link Instant#EPOCH}, matching {@code TypeBootstrapper.getDateChanged}. */
+	private static Instant toInstant(Object cursorDate) {
+		return cursorDate instanceof Date ? ((Date) cursorDate).toInstant() : Instant.EPOCH;
+	}
+
 	// Package-private so a unit test can pin the HQL shape without invoking Hibernate.
 	//
 	// The "AND <patientExpr> IS NOT NULL" clause excludes rows whose patient/person FK is dangling —
 	// an orphan a SQL-dump load can leave behind (a diagnosis/visit pointing at a patient_id with no
 	// patient row). Navigating the association forces an INNER JOIN that drops such rows at the SQL
 	// level. Without it, q.list() eager-materializes the missing association and throws
-	// FetchNotFoundException, failing the ENTIRE type (per-record skip in projectOne can't help — the
-	// failure is at page fetch, before projection). The per-patient scan is already orphan-safe for
+	// FetchNotFoundException, failing the ENTIRE type (per-record skip in serializeAndEmbed can't help —
+	// the failure is at page fetch, before projection; fetchPageSkippingPoison recovers it). The
+	// per-patient scan is already orphan-safe for
 	// the same reason (it navigates the same expr via "= :patientUuid"); this brings the global scan
 	// to parity. Orphan rows are unindexable anyway (no patient to scope them to), so excluding them
 	// is the correct "skip the bad record" behavior.

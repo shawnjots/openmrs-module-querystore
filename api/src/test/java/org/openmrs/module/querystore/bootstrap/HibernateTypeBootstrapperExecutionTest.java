@@ -85,4 +85,24 @@ public class HibernateTypeBootstrapperExecutionTest extends BaseModuleContextSen
 
 		assertNotNull("the fixed diagnosis fetch HQL must run and return a (possibly empty) page", page);
 	}
+
+	@Test
+	public void fetchPageSkippingPoison_runsTheRecoveryHql_andLoadsHealthyRows() throws Exception {
+		// #2: execute the real poison-page recovery against the DB — the (uuid, cursorDate) scalar
+		// projection plus the per-row load-by-uuid. The standard dataset has no orphans, so every row
+		// loads; the point is to prove the recovery HQL parses, runs, and returns the healthy rows with
+		// an advanced cursor (an HQL regression here would throw, which BootstrappersTest's shape checks
+		// can't catch). The per-row skip-on-throw branch can't be exercised without a real dangling FK,
+		// which an FK-enforcing test DB rejects — that branch is covered by TypeBootstrapperTest's fake.
+		executeDataSet("org/openmrs/include/standardTestDataset.xml");
+		DrugOrderBootstrapper bootstrapper =
+		        new DrugOrderBootstrapper(new DrugOrderRecordSerializer(), sessionFactory);
+
+		TypeBootstrapper.PageResult<DrugOrder> page = bootstrapper.fetchPageSkippingPoison(
+		        null, null, 200, new RuntimeException("simulated poison page"));
+
+		assertNotNull(page);
+		assertFalse("recovery HQL must load the dataset's healthy drug orders", page.entities.isEmpty());
+		assertNotNull("cursor advances to the window's last descriptor", page.nextCursorUuid);
+	}
 }

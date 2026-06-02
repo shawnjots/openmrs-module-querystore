@@ -241,6 +241,46 @@ public class TypeBootstrapperTest {
 		assertEquals(3, service.indexed.size());
 	}
 
+	@Test
+	public void run_pageFetchThrows_withoutRecovery_failsWithOriginalError() {
+		// #2: a type with no per-row recovery (the base default) preserves the prior behavior — the
+		// original fetch exception fails the whole type, surfaced verbatim in the progress row.
+		FakeBootstrapper b = new FakeBootstrapper();
+		b.failOnPage(1, new RuntimeException("dangling FK boom"));
+		BootstrapProgress progress = new BootstrapProgress("test");
+
+		try {
+			b.run(progress, service, embedder, progressDao);
+			fail("expected the original fetch error to propagate");
+		}
+		catch (RuntimeException expected) {
+			assertEquals("dangling FK boom", expected.getMessage());
+		}
+
+		assertEquals(BootstrapStatus.FAILED, progress.getStatus());
+		assertEquals("RuntimeException: dangling FK boom", progress.getFailureMessage());
+	}
+
+	@Test
+	public void run_pageFetchThrows_withRecovery_skipsPoisonAdvancesCursorAndCompletes() {
+		// #2: when fetchPage throws on a poison page, run() delegates to fetchPageSkippingPoison, indexes
+		// the recovered healthy records, advances the cursor past the window, and completes the type —
+		// instead of failing it. (The recovery itself is simulated here; the real Hibernate descriptor +
+		// per-row recovery executes against a DB in HibernateTypeBootstrapperExecutionTest.)
+		FakeBootstrapper b = new FakeBootstrapper();
+		b.failOnPage(1, new RuntimeException("FetchNotFoundException: Encounter 999 does not exist"));
+		b.recoverPoison = true;
+		b.poisonRecoveryPage = b.recoveryPage(entity("c", Instant.parse("2025-01-03T00:00:00Z")));
+		BootstrapProgress progress = new BootstrapProgress("test");
+
+		b.run(progress, service, embedder, progressDao);
+
+		assertEquals(BootstrapStatus.COMPLETED, progress.getStatus());
+		assertEquals("the recovered healthy record indexed; the poison row skipped",
+		        1, progress.getDocumentsIndexed());
+		assertEquals("cursor advanced past the recovered poison window", "c", progress.getCursorUuid());
+	}
+
 	// ---------- fakes ----------
 
 	private static TestEntity entity(String uuid, Instant ts) {
@@ -307,6 +347,19 @@ public class TypeBootstrapperTest {
 			this.failureCause = cause;
 		}
 
+		// Poison-page recovery simulation: when recoverPoison is set, fetchPageSkippingPoison returns
+		// poisonRecoveryPage once (then null/exhausted) instead of rethrowing the fetch error.
+		boolean recoverPoison;
+		PageResult<TestEntity> poisonRecoveryPage;
+		private boolean fallbackReturned;
+
+		PageResult<TestEntity> recoveryPage(TestEntity... entities) {
+			List<TestEntity> list = new ArrayList<>();
+			Collections.addAll(list, entities);
+			TestEntity last = entities[entities.length - 1];
+			return new PageResult<>(list, last.ts, last.uuid);
+		}
+
 		@Override public String getResourceType() { return "test"; }
 		@Override protected ClinicalRecordSerializer<TestEntity> getSerializer() { return serializer; }
 		@Override protected Instant getDateChanged(TestEntity e) { return e.ts; }
@@ -320,6 +373,19 @@ public class TypeBootstrapperTest {
 				throw failureCause;
 			}
 			return pages.isEmpty() ? Collections.emptyList() : pages.poll();
+		}
+
+		@Override
+		protected PageResult<TestEntity> fetchPageSkippingPoison(Instant afterDateChanged, String afterUuid,
+		        int pageSize, RuntimeException pageFetchError) {
+			if (!recoverPoison) {
+				return super.fetchPageSkippingPoison(afterDateChanged, afterUuid, pageSize, pageFetchError);
+			}
+			if (!fallbackReturned) {
+				fallbackReturned = true;
+				return poisonRecoveryPage;
+			}
+			return null;
 		}
 	}
 
