@@ -9,11 +9,9 @@
  */
 package org.openmrs.module.querystore.bridge;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 
 import org.openmrs.Obs;
@@ -31,11 +29,12 @@ import org.openmrs.module.querystore.serialization.ObsRecordSerializer;
  * has been verified at parity.
  * <pre>Removal trigger: TBD (events-first obs subscriber)</pre>
  *
- * <p><b>Group obs.</b> Obs is the one entity type that recursively references same-type
- * children — group members are themselves obs. The {@link #collectTree(Obs)} override walks the
- * tree via {@code getGroupMembers(true)} so the abstract base's per-node voided policy can
- * partition each node independently (a {@code saveObs} on a parent whose member was newly voided
- * routes the voided member to delete while indexing the live siblings).
+ * <p><b>Group obs.</b> Obs is the one entity type that recursively references same-type children —
+ * group members are themselves obs. The tree-walk that flattens them lives on
+ * {@link ObsRecordSerializer#collectTree(Obs)} (shared by both sync paths via
+ * {@link RecordProjector}), so the per-node voided policy partitions each node independently (a
+ * {@code saveObs} on a parent whose member was newly voided routes the voided member to delete while
+ * indexing the live siblings).
  */
 public class ObsIndexingAdvice extends AbstractIndexingAdvice<Obs> {
 
@@ -62,25 +61,5 @@ public class ObsIndexingAdvice extends AbstractIndexingAdvice<Obs> {
 	@Override
 	protected Set<String> purgeMethods() {
 		return PURGE_METHODS;
-	}
-
-	@Override
-	protected List<Obs> collectTree(Obs root) {
-		List<Obs> out = new ArrayList<>();
-		collect(root, out);
-		return out;
-	}
-
-	private static void collect(Obs node, List<Obs> out) {
-		out.add(node);
-		Set<Obs> members = node.getGroupMembers(true);
-		if (members == null) {
-			// Obs.getGroupMembers(true) returns the raw field, which is null on a freshly
-			// constructed obs that never had members added.
-			return;
-		}
-		for (Obs child : members) {
-			collect(child, out);
-		}
 	}
 }

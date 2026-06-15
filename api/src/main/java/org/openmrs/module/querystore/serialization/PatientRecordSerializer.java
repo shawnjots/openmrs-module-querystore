@@ -82,6 +82,19 @@ public class PatientRecordSerializer extends AbstractRecordSerializer<Patient> {
 		return Patient.class;
 	}
 
+	/**
+	 * On purge, sweep every per-type-store document keyed by this patient's uuid. Purging a patient
+	 * removes them from core, so the read store must follow and erase their whole chart — every obs /
+	 * encounter / condition / drug_order / etc. keyed by {@code patient_uuid} — to honour the
+	 * deletion's privacy intent (ADR decisions 1 and 10). Voiding a patient is NOT a deletion (the
+	 * chart stays searchable for audit/recovery), so {@code RecordProjector} consults this only on
+	 * purge. Dropping this re-opens a PHI leak.
+	 */
+	@Override
+	public String bulkDeletePatientUuidFor(Patient root) {
+		return root.getUuid();
+	}
+
 	@Override
 	protected String getPatientUuid(Patient patient) {
 		return patient.getUuid();

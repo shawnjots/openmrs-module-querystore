@@ -27,6 +27,9 @@ import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_NUME
 import static org.openmrs.module.querystore.QueryStoreConstants.FIELD_VALUE_TEXT;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 
 import org.openmrs.Concept;
 import org.openmrs.ConceptComplex;
@@ -46,9 +49,11 @@ import org.openmrs.module.querystore.util.DateFormatUtil;
  * (their members are serialized individually) per the ADR decision 6 Synonyms and group obs
  * convention.
  *
- * <p>The serializer processes a single {@link Obs} at a time and does not iterate group members
- * itself — the calling sync pipeline or backfill task is responsible for fanning out across
- * {@link Obs#getGroupMembers()} and invoking {@code serialize} on each.
+ * <p>{@link #serialize} processes a single {@link Obs} at a time. The <em>sync</em> path
+ * ({@code RecordProjector}) fans out across group members via {@link #collectTree(Obs)} — a
+ * {@code saveObs} hands it only the in-memory parent, so it must walk the tree to reach members. The
+ * backfill does not use {@code collectTree}: it scans the {@code obs} table, where members are their
+ * own rows, and serializes each directly.
  */
 public class ObsRecordSerializer extends AbstractRecordSerializer<Obs> {
 
@@ -60,6 +65,32 @@ public class ObsRecordSerializer extends AbstractRecordSerializer<Obs> {
 	@Override
 	public Class<Obs> getSupportedType() {
 		return Obs.class;
+	}
+
+	/**
+	 * Flattens an obs group into the parent plus every member, walked recursively — group members
+	 * are themselves obs. Each node is then projected (or deleted, if voided) in its own right by
+	 * {@code RecordProjector}, so a {@code saveObs} on a parent whose member was newly voided routes
+	 * the voided member to delete while indexing the live siblings.
+	 */
+	@Override
+	public List<Obs> collectTree(Obs root) {
+		List<Obs> out = new ArrayList<>();
+		collect(root, out);
+		return out;
+	}
+
+	private static void collect(Obs node, List<Obs> out) {
+		out.add(node);
+		Set<Obs> members = node.getGroupMembers(true);
+		if (members == null) {
+			// Obs.getGroupMembers(true) returns the raw field, which is null on a freshly
+			// constructed obs that never had members added.
+			return;
+		}
+		for (Obs child : members) {
+			collect(child, out);
+		}
 	}
 
 	@Override

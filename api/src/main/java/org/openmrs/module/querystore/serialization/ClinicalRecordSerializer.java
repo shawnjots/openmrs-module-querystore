@@ -9,6 +9,9 @@
  */
 package org.openmrs.module.querystore.serialization;
 
+import java.util.Collections;
+import java.util.List;
+
 import org.openmrs.module.querystore.model.QueryDocument;
 
 /**
@@ -30,4 +33,28 @@ public interface ClinicalRecordSerializer<T> {
 	 * indexed individually per the ADR decision 6 group obs convention).
 	 */
 	QueryDocument serialize(T record);
+
+	/**
+	 * The set of records to (re)project when {@code root} is saved — the type's projection scope,
+	 * shared by both sync paths ({@link org.openmrs.module.querystore.bridge.RecordProjector}) so AOP
+	 * and events produce identical documents. Defaults to just {@code root}; {@code Obs} overrides to
+	 * include its group members (ADR decision 6), so each member is projected (or deleted, if voided)
+	 * in its own right. Module-contributed serializers (ADR Decision 13) may override for their own
+	 * nested types.
+	 */
+	default List<T> collectTree(T root) {
+		return Collections.singletonList(root);
+	}
+
+	/**
+	 * When {@code root} is purged, the {@code patient_uuid} whose every cross-type document must also
+	 * be swept from the read store, or {@code null} for no cross-type sweep. Default {@code null}:
+	 * purging one record removes only its own document. {@code Patient} overrides to return its uuid,
+	 * so purging a patient erases their whole chart (ADR decisions 1 and 10 — purge is a deletion,
+	 * unlike void). Consulted by {@link org.openmrs.module.querystore.bridge.RecordProjector} only on
+	 * purge.
+	 */
+	default String bulkDeletePatientUuidFor(T root) {
+		return null;
+	}
 }

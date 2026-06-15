@@ -10,16 +10,12 @@
 package org.openmrs.module.querystore.bridge;
 
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 import java.util.Set;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.openmrs.BaseOpenmrsData;
 import org.openmrs.api.context.Context;
-import org.openmrs.module.querystore.model.QueryDocument;
 import org.openmrs.module.querystore.serialization.ClinicalRecordSerializer;
 import org.springframework.aop.AfterReturningAdvice;
 
@@ -45,24 +41,14 @@ import org.springframework.aop.AfterReturningAdvice;
  *       voided flag.</li>
  * </ul>
  *
- * <p>Optional hook:
- * <ul>
- *   <li>{@link #collectTree(BaseOpenmrsData)} — defaults to {@code singletonList(root)}. Override
- *       for entity types that recursively reference siblings of the same type (obs group members)
- *       so each node is independently dispatched under the per-node voided policy.</li>
- * </ul>
- *
- * <p><b>Per-node voided policy.</b> The advised method is treated as a trigger, not as the
- * authority on index-vs-delete. Each node in {@code collectTree(root)} is partitioned by its own
- * voided flag (per ADR Decision 10): voided → delete, non-voided → serialize + index. Purge is the
- * only override — every node in the tree is unconditionally deleted because the core row is being
- * removed.
- *
- * <p><b>Synchronous serialization, asynchronous index.</b> The advice runs inside the originating
- * transaction so lazy Hibernate navigations resolve against an open session. Serialization happens
- * here; embedding and the actual upsert / delete run after commit on the
- * {@link AfterCommitDispatcher}'s executor. Failures inside the dispatched task are caught
- * per-entity so a single poison record can't skip its siblings.
+ * <p><b>Projection is delegated, and shared with the events consumer.</b> This advice only decides
+ * <em>whether</em> to fire (a trigger method) and whether the call is a purge; the actual
+ * {@code serialize → partition-by-voided → dispatch} work — and the per-type behaviour (obs group
+ * flattening, patient purge sweep) now carried on the {@link ClinicalRecordSerializer} — lives in
+ * {@link RecordProjector}, which the events consumer drives identically. That shared core is what
+ * makes events/AOP parity (ADR Decision 12) hold by construction. Serialization runs here, inside
+ * the originating transaction (lazy navigations resolve against an open session); embed + write run
+ * after commit on the {@link AfterCommitDispatcher}.
  *
  * <p><b>Sync-mode gate.</b> {@link #afterReturning} short-circuits when the bridge is gated off by
  * the {@code querystore.syncMode} global property (ADR Decision 12, "Runtime sync-mode selection")
@@ -97,76 +83,18 @@ public abstract class AbstractIndexingAdvice<T extends BaseOpenmrsData> implemen
 		}
 
 		try {
-			dispatch(entity, purgeMethods().contains(name));
+			// Shared with the events consumer (ADR Decision 12 parity): the projection algorithm and
+			// per-type behaviour live in RecordProjector + the serializer, not here. This advice only
+			// decides "fire, and is this a purge?" from the method name; the entity's own voided flag
+			// drives index-vs-delete inside the projector.
+			RecordProjector.project(serializer(), entity, purgeMethods().contains(name), indexer(),
+			    dispatcher());
 		}
 		catch (RuntimeException e) {
 			// Best-effort per ADR Decision 12. Failures during serialization or dispatch must not
 			// propagate back to the clinical-thread caller (the originating save already succeeded).
 			log.warn(getClass().getSimpleName() + " failed for " + name + "; swallowing per ADR Decision 12", e);
 		}
-	}
-
-	private void dispatch(T root, boolean purge) {
-		ClinicalRecordSerializer<T> ser = serializer();
-		BridgeIndexer indexer = indexer();
-		AfterCommitDispatcher dispatcher = dispatcher();
-
-		List<T> tree = collectTree(root);
-		List<QueryDocument> toIndex = new ArrayList<>(tree.size());
-		List<String> toDelete = new ArrayList<>(purge ? tree.size() : 0);
-		for (T node : tree) {
-			if (purge || node.getVoided()) {
-				toDelete.add(node.getUuid());
-			} else {
-				QueryDocument doc = ser.serialize(node);
-				if (doc != null) {
-					toIndex.add(doc);
-				}
-			}
-		}
-
-		// Cross-type sweep hook: subclasses whose purge means "this patient is gone from core,
-		// remove every per-type-store document keyed by their patient_uuid" return the uuid here.
-		// Default null: no cross-type sweep — purging an obs/encounter/condition/etc. only removes
-		// that one row. Currently only PatientIndexingAdvice opts in.
-		String bulkDeletePatientUuid = purge ? bulkDeletePatientUuidFor(root) : null;
-
-		if (toIndex.isEmpty() && toDelete.isEmpty() && bulkDeletePatientUuid == null) {
-			return;
-		}
-		String resourceType = ser.getResourceType();
-		dispatcher.dispatch(() -> {
-			// Per-entity failure isolation: a single poison document (e.g., embedder throws on a
-			// pathological text) must not skip its sibling members. The dispatcher's outer guard
-			// remains as a last-resort catch for anything that escapes here.
-			for (QueryDocument doc : toIndex) {
-				try {
-					indexer.index(doc);
-				}
-				catch (RuntimeException e) {
-					log.warn("Bridge skipping index for " + resourceType + "/"
-					        + doc.getResourceUuid() + " due to failure", e);
-				}
-			}
-			for (String uuid : toDelete) {
-				try {
-					indexer.delete(resourceType, uuid);
-				}
-				catch (RuntimeException e) {
-					log.warn("Bridge skipping delete for " + resourceType + "/" + uuid
-					        + " due to failure", e);
-				}
-			}
-			if (bulkDeletePatientUuid != null) {
-				try {
-					indexer.bulkDeleteByPatient(bulkDeletePatientUuid);
-				}
-				catch (RuntimeException e) {
-					log.warn("Bridge skipping bulk-delete-by-patient for "
-					        + bulkDeletePatientUuid + " due to failure", e);
-				}
-			}
-		});
 	}
 
 	private T entityFrom(Object returnValue, Object[] args) {
@@ -198,36 +126,6 @@ public abstract class AbstractIndexingAdvice<T extends BaseOpenmrsData> implemen
 	 * method.
 	 */
 	protected abstract Set<String> purgeMethods();
-
-	/**
-	 * Default: a single-element list containing only the root. Override for entity types that
-	 * recursively reference same-type siblings (currently {@code Obs} group members) so each node
-	 * is dispatched independently under the per-node voided policy.
-	 */
-	protected List<T> collectTree(T root) {
-		return Collections.singletonList(root);
-	}
-
-	/**
-	 * Subclass hook: when this advice fires for a purge method, also bulk-delete every per-type-
-	 * store document keyed by the returned {@code patient_uuid}. Default {@code null}: purge
-	 * removes only the entity's own row, no cross-type sweep.
-	 *
-	 * <p>Currently only {@link PatientIndexingAdvice} overrides — a core {@code purgePatient} call
-	 * removes the patient from OpenMRS, so the read-store must follow and erase every obs,
-	 * encounter, condition, drug_order, etc. keyed by that patient_uuid to honour the underlying
-	 * deletion's privacy intent. Voiding a patient is NOT a deletion (the chart stays searchable
-	 * for audit/recovery), so the hook is consulted only when the advised method is in
-	 * {@link #purgeMethods()}.
-	 *
-	 * <p>Returning a non-null uuid causes {@link BridgeIndexer#bulkDeleteByPatient(String)} to
-	 * fire after the per-row delete on the dispatcher's after-commit thread. Per-document failures
-	 * inside the bulk delete are swallowed by the backend's own per-table/-index catch so a stale
-	 * lock on one type doesn't poison the rest of the sweep.
-	 */
-	protected String bulkDeletePatientUuidFor(T root) {
-		return null;
-	}
 
 	/**
 	 * Whether the AOP bridge path is active under the configured {@code querystore.syncMode} (ADR

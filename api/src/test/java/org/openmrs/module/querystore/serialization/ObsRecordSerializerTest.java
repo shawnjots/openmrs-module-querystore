@@ -176,6 +176,32 @@ public class ObsRecordSerializerTest {
 	}
 
 	@Test
+	public void collectTree_flattensGroupMembersRecursively() {
+		Obs parent = obs(concept("Vital signs"));
+		parent.setUuid("parent");
+		Obs member = obs(concept("Blood pressure panel"));
+		member.setUuid("member");
+		Obs nested = obs(concept("Systolic"));
+		nested.setUuid("nested");
+		member.addGroupMember(nested);
+		parent.addGroupMember(member);
+
+		List<Obs> tree = serializer.collectTree(parent);
+
+		assertEquals("parent + member + nested member, each projected in its own right", 3, tree.size());
+		assertTrue(tree.contains(parent));
+		assertTrue(tree.contains(member));
+		assertTrue(tree.contains(nested));
+	}
+
+	@Test
+	public void collectTree_nonGroupObs_returnsJustItself() {
+		Obs solo = obs(concept("Weight"));
+		solo.setUuid("solo");
+		assertEquals(1, serializer.collectTree(solo).size());
+	}
+
+	@Test
 	public void serialize_groupParentWithoutOwnValue_returnsNull() {
 		Obs parent = obs(concept("Vital signs"));
 		parent.addGroupMember(obs(concept("Pulse")));
