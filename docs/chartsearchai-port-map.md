@@ -47,7 +47,7 @@ Useful as a checklist for events-first subscription coverage. Under core's #6084
 - `ProgramWorkflowService` — patient program enrollment + state changes
 - `MedicationDispenseService`
 
-`mergePatients` on `PatientService` is special-cased today (re-index preferred + delete-by-patient on non-preferred) and is tracked under the [Patient merge handling](./adr.md#patient-merge-handling) open question.
+`mergePatients` on `PatientService` is special-cased today (re-index preferred + delete-by-patient on non-preferred). querystore now does the same, triggered off the incidental `SaveServiceEvent<PersonMergeLog>` rather than chartsearchai's AOP — see [Patient merge handling](./adr.md#patient-merge-handling) (resolved).
 
 ## Operational quirks worth knowing
 

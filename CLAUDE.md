@@ -25,9 +25,9 @@ The ADR is dense; here is the minimal load-bearing set with anchors.
 
 ## Implementation priorities
 
-The fastest path to a useful querystore is unblocking [chartsearchai's migration](docs/migration-chartsearchai.md). Authorization and the v1 consumer API surface are now settled by [Decision 14](docs/adr.md#decision-14-authorization-and-consumer-api-surface). The remaining four [open questions](docs/adr.md#open-questions) on the chartsearchai-blocking path:
+The fastest path to a useful querystore is unblocking [chartsearchai's migration](docs/migration-chartsearchai.md). Authorization and the v1 consumer API surface are now settled by [Decision 14](docs/adr.md#decision-14-authorization-and-consumer-api-surface). The remaining [open questions](docs/adr.md#open-questions) on the chartsearchai-blocking path:
 
-1. [Patient merge handling](docs/adr.md#patient-merge-handling)
+1. [Patient merge handling](docs/adr.md#patient-merge-handling) — **resolved** (rides the incidental `SaveServiceEvent<PersonMergeLog>`; delete-loser + reindex-winner via `CoreServiceEventListener.reconcileMerge`).
 2. [Initial backfill / bootstrap](docs/adr.md#initial-backfill--bootstrap)
 3. [Long-text chunking for embeddings](docs/adr.md#long-text-chunking-for-embeddings)
 4. [Sync reliability and reconciliation](docs/adr.md#sync-reliability-and-reconciliation)

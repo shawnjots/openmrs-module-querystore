@@ -11,6 +11,9 @@ package org.openmrs.module.querystore.events;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.util.Date;
 
@@ -20,10 +23,13 @@ import org.openmrs.Encounter;
 import org.openmrs.EncounterType;
 import org.openmrs.Location;
 import org.openmrs.Patient;
+import org.openmrs.Person;
 import org.openmrs.aop.event.PurgeServiceEvent;
 import org.openmrs.aop.event.SaveServiceEvent;
 import org.openmrs.aop.event.UnvoidServiceEvent;
 import org.openmrs.aop.event.VoidServiceEvent;
+import org.openmrs.person.PersonMergeLog;
+import org.openmrs.module.querystore.bootstrap.BootstrapService;
 import org.openmrs.module.querystore.sync.AfterCommitDispatcher;
 import org.openmrs.module.querystore.sync.RecordIndexer;
 import org.openmrs.module.querystore.sync.SyncTestSupport.ImmediateDispatcher;
@@ -41,14 +47,20 @@ public class CoreServiceEventListenerTest {
 
 	private RecordingService service;
 
+	private BootstrapService bootstrapService;
+
+	private ImmediateDispatcher dispatcher;
+
 	private TestableListener listener;
 
 	@Before
 	public void setUp() {
 		service = new RecordingService();
+		bootstrapService = mock(BootstrapService.class);
+		dispatcher = new ImmediateDispatcher();
 		RecordIndexer indexer = new RecordIndexer(service, new ZeroEmbedder());
-		listener = new TestableListener(indexer, new ImmediateDispatcher(),
-		    EventsTestSupport.registryOf(new EncounterRecordSerializer()));
+		listener = new TestableListener(indexer, dispatcher,
+		    EventsTestSupport.registryOf(new EncounterRecordSerializer()), bootstrapService);
 	}
 
 	@Test
@@ -101,6 +113,48 @@ public class CoreServiceEventListenerTest {
 		assertTrue(service.deleted.isEmpty());
 	}
 
+	@Test
+	public void onSave_personMergeLog_sweepsLoserAndReindexesWinner() {
+		// Core fires no merge event; mergePatients ends by saving a PersonMergeLog, surfaced as
+		// SaveServiceEvent<PersonMergeLog>. The consumer must sweep the merged-away patient's
+		// orphaned docs and re-project the survivor's now-complete chart.
+		listener.onSave(new SaveServiceEvent<>(mergeLog("winner-uuid", "loser-uuid")));
+
+		// Reconcile must be deferred through the dispatcher (after-commit, off the clinical thread) —
+		// not run inline on the merge transaction, which the heavy reindex would block.
+		assertEquals(1, dispatcher.count);
+		assertEquals(1, service.bulkDeletedPatients.size());
+		assertEquals("loser-uuid", service.bulkDeletedPatients.get(0));
+		verify(bootstrapService).reindexPatient("winner-uuid");
+		// Routed to reconcile, not normal projection — the merge log itself is never indexed.
+		assertTrue(service.indexed.isEmpty());
+		assertTrue(service.deleted.isEmpty());
+	}
+
+	@Test
+	public void onSave_personMergeLogMissingAnEnd_isInert() {
+		// A malformed merge log (no loser) must not sweep nor reindex — there is nothing to reconcile.
+		PersonMergeLog malformed = new PersonMergeLog();
+		malformed.setWinner(person("winner-uuid"));
+		listener.onSave(new SaveServiceEvent<>(malformed));
+
+		assertTrue(service.bulkDeletedPatients.isEmpty());
+		verifyNoInteractions(bootstrapService);
+	}
+
+	private static PersonMergeLog mergeLog(String winnerUuid, String loserUuid) {
+		PersonMergeLog log = new PersonMergeLog();
+		log.setWinner(person(winnerUuid));
+		log.setLoser(person(loserUuid));
+		return log;
+	}
+
+	private static Person person(String uuid) {
+		Person person = new Person();
+		person.setUuid(uuid);
+		return person;
+	}
+
 	private static Encounter encounter(String uuid, boolean voided) {
 		Encounter enc = new Encounter();
 		enc.setUuid(uuid);
@@ -128,10 +182,14 @@ public class CoreServiceEventListenerTest {
 
 		private final SerializerRegistry registry;
 
-		TestableListener(RecordIndexer indexer, AfterCommitDispatcher dispatcher, SerializerRegistry registry) {
+		private final BootstrapService bootstrapService;
+
+		TestableListener(RecordIndexer indexer, AfterCommitDispatcher dispatcher, SerializerRegistry registry,
+		        BootstrapService bootstrapService) {
 			this.indexer = indexer;
 			this.dispatcher = dispatcher;
 			this.registry = registry;
+			this.bootstrapService = bootstrapService;
 		}
 
 		@Override
@@ -147,6 +205,11 @@ public class CoreServiceEventListenerTest {
 		@Override
 		AfterCommitDispatcher dispatcher() {
 			return dispatcher;
+		}
+
+		@Override
+		BootstrapService bootstrapService() {
+			return bootstrapService;
 		}
 	}
 }

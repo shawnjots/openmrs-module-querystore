@@ -12,6 +12,7 @@ package org.openmrs.module.querystore.events;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.openmrs.BaseOpenmrsData;
+import org.openmrs.Person;
 import org.openmrs.aop.event.PurgeServiceEvent;
 import org.openmrs.aop.event.RetireServiceEvent;
 import org.openmrs.aop.event.SaveServiceEvent;
@@ -19,6 +20,8 @@ import org.openmrs.aop.event.UnretireServiceEvent;
 import org.openmrs.aop.event.UnvoidServiceEvent;
 import org.openmrs.aop.event.VoidServiceEvent;
 import org.openmrs.api.context.Context;
+import org.openmrs.person.PersonMergeLog;
+import org.openmrs.module.querystore.bootstrap.BootstrapService;
 import org.openmrs.module.querystore.sync.AfterCommitDispatcher;
 import org.openmrs.module.querystore.sync.RecordIndexer;
 import org.openmrs.module.querystore.sync.RecordProjector;
@@ -38,11 +41,17 @@ import org.springframework.context.event.EventListener;
  * so the clinical thread is not blocked on embedding and nothing is indexed for a rolled-back
  * transaction. (Verified end-to-end against a real 2.9 server by {@code CoreServiceEventTest}.)
  *
- * <p><b>Disposition.</b> Every event but purge maps to {@code project(entity, purge=false)}: the
- * entity's own {@code voided} flag — set before the event publishes — drives index-vs-delete (ADR
- * Decision 10). {@code PurgeServiceEvent} maps to {@code purge=true} (delete + patient sweep).
- * {@code Retire}/{@code Unretire} are handled for completeness but are inert for the current indexed
- * types, which are all {@code OpenmrsData}.
+ * <p><b>Disposition.</b> Every event but purge maps to {@code project(entity, purge=false)} — except
+ * the {@code PersonMergeLog} save, which routes to merge reconciliation (see Patient merge below).
+ * For a projected event the entity's own {@code voided} flag — set before the event publishes —
+ * drives index-vs-delete (ADR Decision 10). {@code PurgeServiceEvent} maps to {@code purge=true}
+ * (delete + patient sweep). {@code Retire}/{@code Unretire} are handled for completeness but are inert
+ * for the current indexed types, which are all {@code OpenmrsData}.
+ *
+ * <p><b>Patient merge.</b> Core emits no merge event, but {@code mergePatients} ends by saving a
+ * {@link PersonMergeLog}, so {@code onSave} also receives {@code SaveServiceEvent<PersonMergeLog>}
+ * and routes it to {@link #reconcileMerge} instead of normal projection — see that method for the
+ * delete-loser + reindex-winner contract.
  *
  * <p><b>Footprint.</b> Core's #6084 advice is global, so these handlers fire for <em>every</em>
  * {@code OpenmrsService} save/void/purge, not only indexed types; a non-indexed entity is dropped
@@ -54,7 +63,12 @@ public class CoreServiceEventListener {
 
 	@EventListener
 	public void onSave(SaveServiceEvent<?> event) {
-		project(event.getEntity(), false);
+		Object entity = event.getEntity();
+		if (entity instanceof PersonMergeLog) {
+			reconcileMerge((PersonMergeLog) entity);
+			return;
+		}
+		project(entity, false);
 	}
 
 	@EventListener
@@ -104,8 +118,48 @@ public class CoreServiceEventListener {
 		}
 	}
 
+	/**
+	 * Patient-merge reconciliation (ADR Decision 12 / "Patient merge handling"). Core has no merge
+	 * event; {@code PatientService.mergePatients} ends by saving a {@link PersonMergeLog} through the
+	 * service proxy, which #6084 surfaces as {@code SaveServiceEvent<PersonMergeLog>} carrying the
+	 * winner (surviving) and loser (merged-away) {@link Person}s. By the time it fires, core has
+	 * committed every reassignment — the loser's clinical data now belongs to the winner — and voided
+	 * the loser.
+	 *
+	 * <p>We reconcile the read store authoritatively rather than relying on the per-record save events
+	 * the merge incidentally fires: those cover the types core re-saves through a proxy (encounter,
+	 * visit, non-encounter obs, patient program) but not orders/conditions/allergies/diagnoses or
+	 * encounter-contained obs, which would otherwise linger under the loser uuid. So we sweep the
+	 * loser's documents and re-project the winner's now-complete chart via {@code reindexPatient}
+	 * (delete + unconditional re-projection under the per-patient lock) — idempotent and independent
+	 * of which reassignments happened to emit events. Person and Patient share a uuid, so the person
+	 * uuid is the document {@code patient_uuid}.
+	 *
+	 * <p>The whole reconcile is deferred after-commit on the sync executor's daemon thread (like every
+	 * projection) so the heavy re-projection neither runs against uncommitted merge state nor blocks
+	 * the clinical thread that performed the merge.
+	 */
+	void reconcileMerge(PersonMergeLog mergeLog) {
+		Person winner = mergeLog.getWinner();
+		Person loser = mergeLog.getLoser();
+		if (winner == null || loser == null) {
+			// A merge log missing either end is malformed; there is nothing to reconcile.
+			return;
+		}
+		String winnerUuid = winner.getUuid();
+		String loserUuid = loser.getUuid();
+		dispatcher().dispatch(() -> {
+			indexer().bulkDeleteByPatient(loserUuid);
+			bootstrapService().reindexPatient(winnerUuid);
+		});
+	}
+
 	SerializerRegistry registry() {
 		return Context.getRegisteredComponent("querystore.serializerRegistry", SerializerRegistry.class);
+	}
+
+	BootstrapService bootstrapService() {
+		return Context.getService(BootstrapService.class);
 	}
 
 	RecordIndexer indexer() {

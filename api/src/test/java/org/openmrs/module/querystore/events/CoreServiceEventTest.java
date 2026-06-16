@@ -19,6 +19,7 @@ import org.openmrs.Patient;
 import org.openmrs.aop.event.SaveServiceEvent;
 import org.openmrs.aop.event.VoidServiceEvent;
 import org.openmrs.api.context.Context;
+import org.openmrs.person.PersonMergeLog;
 import org.openmrs.test.BaseModuleContextSensitiveTest;
 
 /**
@@ -31,7 +32,10 @@ import org.openmrs.test.BaseModuleContextSensitiveTest;
  *       service ({@link org.openmrs.api.LocationService}), the shape the #6084 guard de-duplicates
  *       rather than suppresses; and</li>
  *   <li>the {@code voided} flag is already set when {@link VoidServiceEvent} publishes, which is
- *       what lets the consumer route a void to a delete by reading the flag (purge=false).</li>
+ *       what lets the consumer route a void to a delete by reading the flag (purge=false); and</li>
+ *   <li>a real {@code mergePatients} publishes a {@code SaveServiceEvent<PersonMergeLog>} carrying
+ *       winner + loser — the sole signal the consumer's patient-merge reconciliation rides, since
+ *       core fires no dedicated merge event.</li>
  * </ul>
  */
 public class CoreServiceEventTest extends BaseModuleContextSensitiveTest {
@@ -63,6 +67,31 @@ public class CoreServiceEventTest extends BaseModuleContextSensitiveTest {
 		assertTrue("the entity must already be voided when VoidServiceEvent publishes, so the consumer "
 		        + "can route it to a delete by reading the flag",
 		    probe.voidedFlagAtVoidEvent().stream().allMatch(Boolean::booleanValue));
+	}
+
+	@Test
+	public void mergePatients_publishesPersonMergeLogSaveEvent() throws Exception {
+		// The load-bearing fact behind patient-merge handling: core fires NO dedicated merge event,
+		// but mergePatients ends by saving a PersonMergeLog through the service proxy. Verify that
+		// surfaces as a SaveServiceEvent<PersonMergeLog> a context @EventListener receives, carrying
+		// the winner + loser the consumer's reconcile reads.
+		ServiceEventProbe probe = probe();
+		Patient preferred = Context.getPatientService().getPatient(7);
+		Patient notPreferred = Context.getPatientService().getPatient(8);
+		assertNotNull("standard test data should have patient 7", preferred);
+		assertNotNull("standard test data should have patient 8", notPreferred);
+
+		Context.getPatientService().mergePatients(preferred, notPreferred);
+
+		PersonMergeLog merge = probe.savedEntities().stream()
+		        .filter(e -> e instanceof PersonMergeLog)
+		        .map(e -> (PersonMergeLog) e)
+		        .reduce((first, second) -> second)
+		        .orElse(null);
+		assertNotNull("mergePatients must publish a SaveServiceEvent<PersonMergeLog> — the consumer's "
+		        + "sole merge signal", merge);
+		assertNotNull("the merge event must carry the surviving person for reindex", merge.getWinner());
+		assertNotNull("the merge event must carry the merged-away person for the sweep", merge.getLoser());
 	}
 
 	private static ServiceEventProbe probe() {
