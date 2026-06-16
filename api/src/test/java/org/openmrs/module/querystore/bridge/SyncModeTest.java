@@ -14,8 +14,16 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
+import org.openmrs.module.querystore.QueryStoreConstants;
 
 public class SyncModeTest {
+
+	@Test
+	public void defaultSyncMode_isEvents() {
+		// The configured default (GP absent) is events — the consumer is the active path; the bridge
+		// is the opt-out. Locks the post-verification flip (ADR Decision 12 trajectory).
+		assertEquals(SyncMode.EVENTS, SyncMode.parse(QueryStoreConstants.DEFAULT_SYNC_MODE));
+	}
 
 	@Test
 	public void parse_recognizesEachMode() {

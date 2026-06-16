@@ -80,11 +80,12 @@
 
     <globalProperty>
         <property>querystore.syncMode</property>
-        <defaultValue>aop</defaultValue>
-        <description>Active sync path (ADR Decision 12). "aop" runs the migration-bridge advice;
-            "events" consumes core's #6084 *ServiceEvents and gates the bridge off; "both" runs both
-            for parity verification only (double embedding cost — not a steady state). Read once at
-            startup and cached; a change takes effect on the next module/server restart.</description>
+        <defaultValue>events</defaultValue>
+        <description>Active sync path (ADR Decision 12). "events" (default) consumes core's #6084
+            *ServiceEvents and gates the bridge off; "aop" runs the migration-bridge advice instead;
+            "both" runs both for parity verification only (double embedding cost — not a steady
+            state). Read once at startup and cached; a change takes effect on the next module/server
+            restart.</description>
     </globalProperty>
 
     <globalProperty>

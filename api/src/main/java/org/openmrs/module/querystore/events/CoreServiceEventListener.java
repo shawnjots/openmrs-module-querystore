@@ -51,7 +51,7 @@ import org.springframework.context.event.EventListener;
  *
  * <p><b>Footprint.</b> Core's #6084 advice is global, so these handlers fire for <em>every</em>
  * {@code OpenmrsService} save/void/purge, not only indexed types. The {@link #eventsEnabled()} gate
- * is therefore checked once per such call even in the default {@code aop} mode (where it returns
+ * is therefore checked once per such call even when {@code aop} mode is selected (where it returns
  * false and the handler does nothing), and an indexed-type check ({@code instanceof BaseOpenmrsData}
  * + a serializer lookup) runs only after the gate passes. The per-call cost is a singleton bean
  * lookup; if profiling ever shows it matters, cache the resolver reference here.
@@ -116,9 +116,9 @@ public class CoreServiceEventListener {
 	}
 
 	/**
-	 * Whether the events path is active under {@code querystore.syncMode}. Defaults to {@code false}
-	 * when the resolver can't be reached (no context), the safe default that leaves the AOP bridge as
-	 * the sole path. Package-visible so tests drive the gate without a context.
+	 * Whether the events path is active under {@code querystore.syncMode} (the default mode). Falls
+	 * back to {@code false} when the resolver can't be reached (no context) — the failure-safe that
+	 * leaves the AOP bridge as the sole path. Package-visible so tests drive the gate without a context.
 	 */
 	boolean eventsEnabled() {
 		try {

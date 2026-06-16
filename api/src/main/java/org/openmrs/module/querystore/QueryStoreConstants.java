@@ -240,8 +240,10 @@ public final class QueryStoreConstants {
 	 * Selects the active sync path (ADR Decision 12, "Runtime sync-mode selection"). {@code aop}
 	 * runs the migration-bridge advice; {@code events} consumes core's #6084 {@code *ServiceEvent}s
 	 * and gates the bridge off; {@code both} runs both for the parity-verification overlap only
-	 * (double embedding cost — not a steady state). Defaults to {@code aop}. Read once at startup and
-	 * cached; changing it takes effect on the next module/server restart.
+	 * (double embedding cost — not a steady state). Defaults to {@code events} (flipped from
+	 * {@code aop} once the consumer was verified end-to-end; the bridge remains the opt-out and the
+	 * resolver-unavailable failure-safe). Read once at startup and cached; changing it takes effect on
+	 * the next module/server restart.
 	 */
 	public static final String GP_SYNC_MODE = "querystore.syncMode";
 
@@ -251,7 +253,7 @@ public final class QueryStoreConstants {
 
 	public static final String SYNC_MODE_BOTH = "both";
 
-	public static final String DEFAULT_SYNC_MODE = SYNC_MODE_AOP;
+	public static final String DEFAULT_SYNC_MODE = SYNC_MODE_EVENTS;
 
 	/**
 	 * Runtime-property key carrying the Elasticsearch endpoint URI (e.g.

@@ -19,8 +19,8 @@ import org.openmrs.module.querystore.QueryStoreConstants;
  * the parity-verification overlap:
  *
  * <ul>
- *   <li>{@link #AOP} — migration-bridge advice only (the default).</li>
- *   <li>{@link #EVENTS} — consume core's #6084 {@code *ServiceEvent}s; the bridge gates off.</li>
+ *   <li>{@link #AOP} — migration-bridge advice only (the opt-out, and the failure-safe fallback).</li>
+ *   <li>{@link #EVENTS} — consume core's #6084 {@code *ServiceEvent}s; the bridge gates off (the default).</li>
  *   <li>{@link #BOTH} — both, for parity verification only; double embedding cost, not a steady
  *       state.</li>
  * </ul>
@@ -52,7 +52,8 @@ public enum SyncMode {
 
 	/**
 	 * Parses a {@code querystore.syncMode} value. Null, blank, or unrecognized values fall back to
-	 * {@link #AOP} — the safe default, since AOP is the always-available path and silently enabling
+	 * {@link #AOP} — the conservative, always-available path — rather than the configured default
+	 * ({@code events}): a malformed value shouldn't silently activate the events path, and enabling
 	 * neither would stall the projection (ADR Decision 12: a stale projection is the worst failure
 	 * mode). Unrecognized non-blank values are logged so a typo is visible.
 	 */

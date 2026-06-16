@@ -53,8 +53,9 @@ import org.springframework.aop.AfterReturningAdvice;
  * <p><b>Sync-mode gate.</b> {@link #afterReturning} short-circuits when the bridge is gated off by
  * the {@code querystore.syncMode} global property (ADR Decision 12, "Runtime sync-mode selection")
  * — checked via {@link #aopEnabled()} after the cheap trigger-method test, so non-trigger calls pay
- * nothing. The default is AOP-on, including when the mode can't be resolved (e.g. no running
- * context).
+ * nothing. The configured default is now {@code events} (so the bridge is normally gated off); it
+ * falls back to AOP-on only when the mode can't be resolved (e.g. no running context) — the
+ * failure-safe, since the bridge is always available.
  *
  * <p><b>Removal marker.</b> Each subclass is time-bound and carries its own removal marker per
  * ADR Decision 12. This abstract base is deleted when the last subclass is removed.
@@ -131,7 +132,7 @@ public abstract class AbstractIndexingAdvice<T extends BaseOpenmrsData> implemen
 	 * Whether the AOP bridge path is active under the configured {@code querystore.syncMode} (ADR
 	 * Decision 12). Read from the cached {@link SyncModeResolver}. If the resolver can't be reached —
 	 * notably in plain unit tests with no running OpenMRS context — the gate defaults to {@code true}
-	 * (AOP enabled), the safe default that preserves pre-gate behavior and keeps the projection from
+	 * (AOP enabled), the safe fallback that preserves pre-gate behavior and keeps the projection from
 	 * silently stalling. Package-visible so gate tests can drive the gated-off path without a context.
 	 */
 	boolean aopEnabled() {
