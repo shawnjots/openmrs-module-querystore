@@ -2,7 +2,7 @@
 name: pr-review
 description: Review a GitHub pull request with empirical verification and clearly-labeled review comments, optionally posting them inline on GitHub. Use when asked to review a PR or post review findings as PR comments. Trigger phrases include "review PR", "review this pull request", "post review comments".
 argument-hint: <pr-number-or-url> [--post]
-version: 0.8.0
+version: 0.9.0
 ---
 
 # PR review — verified findings, unambiguous comments
@@ -57,24 +57,26 @@ Structure of the summary body:
 
 1. Verdict first — **disposition + one headline reason + scope**, nothing else. Disposition is "merge", "merge after X", or "needs work"; the headline is the single biggest reason (point at the finding numbers); scope is the bar you're judging against (e.g. "as a POC none block it; as production code they do"). Don't tour the architecture or grade it ("the design is coherent", "the happy path is plausible") — that's narration-plus-praise the author can't act on. A maintainer scanning the PR should get the call and the one reason in a sentence or two.
 2. Findings, each carrying its own evidence (its failure-mode sentence, or the verification that grounds it).
-3. Close with a **"Needs action before merge:"** checklist — or explicitly "none".
+3. End by making explicit what blocks merge — a short list when it's more than one thing, a single sentence when it's one, and nothing when it's nothing. Don't reach for a fixed boilerplate header: a verbatim string like "Needs action before merge:" stamped on every review is itself a bot fingerprint. Say what's left to do the way you'd say it to a colleague.
+
+A "ready to merge" verdict with nothing left to act on is **not** something you post — see Step 4. It goes to the person who asked for the review, in conversation, not as a comment on the PR.
 
 Evidence lives *inside the finding it supports*, not in a standalone "what I verified" section — a real finding is self-justifying once the reader checks it against the code, so a separate verification recap is redundant overhead. **Checked it and it's fine → say nothing.** Do not note cleared concerns "so they aren't re-raised": if the thing is trivially checkable, a later reviewer checks it as fast as you did and your note saves no round; if it isn't, a one-line reply when/if someone actually raises it costs less than pre-empting it on every review.
 
-There is no exception — and on this the body is absolute: verified-clean material never appears in it, not as a section, a bullet, a terse line, or folded into prose. Even when cross-cutting verification was the whole point of the review (e.g. a pom.xml PR's "are the artifacts byte-identical?"), the result is reflected only in the verdict's disposition and the confidence behind it — never written out as a verified-clean note. If such a result genuinely must be on the record, it goes in a single inline `note (no action needed):` anchored to the relevant line, never in the body. On a **re-review** this bans the resolved-finding recap specifically: do not open with "all N points from last round are addressed" or otherwise tally what got fixed. When every prior finding is resolved and nothing new surfaced, the body is just the verdict — "merge" plus the one-line reason — and the disposition alone carries that your concerns were met.
+There is no exception — and on this the body is absolute: verified-clean material never appears in it, not as a section, a bullet, a terse line, or folded into prose. Even when cross-cutting verification was the whole point of the review (e.g. a pom.xml PR's "are the artifacts byte-identical?"), the result is reflected only in the verdict's disposition and the confidence behind it — never written out as a verified-clean note. If such a result genuinely must be on the record, it goes in a single inline `note (no action needed):` anchored to the relevant line, never in the body. On a **re-review** this bans the resolved-finding recap specifically: do not open with "all N points from last round are addressed" or otherwise tally what got fixed. When every prior finding is resolved and nothing new surfaced, there is nothing to post at all: tell the user it's ready to merge in the conversation (Step 4), rather than posting a review body that just announces "merge" — a bot-style "this is ready to merge / LGTM" comment is exactly what makes the author feel they're dealing with a machine instead of a person.
 
 Rules for every inline comment, no exceptions (this is the part PR authors complained about when missing):
 
-- Every inline comment must either request an action or ask a question. The **first line is a label plus a one-line imperative or verdict**:
-  - `issue (blocking):` — must be fixed before merge
-  - `suggestion (non-blocking):` — recommended change the author may decline
-  - `question:` — a genuine question whose answer affects the verdict. Also use this for uncertainty about an observed side effect ("this changes X — intended?"); a question invites confirmation from people with more context far better than an FYI does.
-  - `nit:` — trivial, take or leave
-  - `note (no action needed):` — exceptional. Allowed only when it does one of these jobs:
+- Every inline comment must either request an action or ask a question, and its **first line must make clear what kind of comment it is and what (if anything) the author has to do**. Carry that the way a human reviewer would — in plain language ("This needs fixing before merge — …", "Optional: …", "Is this intended?") — rather than stamping every comment with a taxonomy tag. A column of `issue (blocking):` / `suggestion (non-blocking):` / `nit:` prefixes down the page is itself a bot fingerprint; reach for an explicit label only when the prose doesn't already make the blocking-ness obvious, or when the maintainers have asked for those tags. Whichever form you use, these are the distinctions that must come through:
+  - **blocking** — must be fixed before merge
+  - **suggestion (non-blocking)** — recommended change the author may decline
+  - **question** — a genuine question whose answer affects the verdict. Also use this for uncertainty about an observed side effect ("this changes X — intended?"); a question invites confirmation from people with more context far better than an FYI does.
+  - **nit** — trivial, take or leave
+  - **note (no action needed)** — exceptional. Allowed only when it does one of these jobs:
     1. records that a behavior change was seen and deliberately accepted, so the audit trail shows it wasn't missed if something breaks later; or
     2. warns a specific future reader at the line they will be looking at (e.g. whoever cuts the next release).
     If it does neither and isn't really a question in disguise, it's narration — don't post it anywhere.
-- An `issue (blocking):` must contain a concrete failure-mode sentence: **"if merged as-is, X breaks because Y."** If you cannot write that sentence, it is not blocking — relabel or drop it. "Low risk" without naming the risk, "matches the existing pattern", "probably fine" are dodges, not verdicts: name what breaks, who notices, and how.
+- A blocking comment must contain a concrete failure-mode sentence: **"if merged as-is, X breaks because Y."** If you cannot write that sentence, it is not blocking — downgrade it or drop it. "Low risk" without naming the risk, "matches the existing pattern", "probably fine" are dodges, not verdicts: name what breaks, who notices, and how.
 - Silent-failure upgrade: when the failure mode produces wrong behavior without throwing (a swapped repo id, a dropped field, a silently replaced MockMaker), treat it one level more seriously than a crash — CI cannot catch what doesn't throw, so the cost of discovery lands on users.
 - When presenting alternatives, always state the recommended default. Never end on "either option is defensible" without picking one.
 - Do not narrate what the diff does — the author wrote it.
@@ -87,15 +89,17 @@ Rules for every inline comment, no exceptions (this is the part PR authors compl
 
 Posting publishes under the user's own GitHub account. Post only when the user passed `--post` or explicitly asked; otherwise present the full review in the conversation and offer to post.
 
+**A clean "ready to merge" verdict is reported to the user here, never posted to the PR.** When the review turns up nothing to act on — fresh PR or re-review where every prior finding is resolved — there is no review to publish: tell the user it's ready to merge in the conversation and stop. Do not open a review (even with `--post`) whose body just announces the PR is good to go. Posting "this is ready to merge / LGTM / all looks good now" is the clearest tell that a bot, not a person, is on the other end, and it's the thing PR authors most dislike. Posting still happens normally when there ARE action items — you post those findings; you just never add a standalone merge-readiness flourish.
+
 **Pre-posting gate** — before presenting or posting, write these four as four explicit, standalone lines in your report to the user — verbatim, not paraphrased, not woven into prose narration. If any cannot be said truthfully, go back and fix the review first:
 
 > "Every finding was verified by [building / running / tracing / upstream check], not just read off the diff."
 
-> "Every inline comment leads with a label and either requests an action or asks a question; every `issue (blocking)` contains its failure-mode sentence; and no comment — fresh or threaded reply — exists merely to acknowledge a fix or credit resolved work."
+> "Every inline comment's first line makes clear what it is and what the author must do (in plain language, not a stamped-on tag), and either requests an action or asks a question; every blocking comment contains its failure-mode sentence; and no comment — fresh or threaded reply — exists merely to acknowledge a fix or credit resolved work."
 
 > "The summary body is verdict + findings + 'needs action' and nothing else — zero verified-clean or cleared-concern content anywhere in it: no 'what I checked' line, bullet, section, or aside, and none folded into prose — and on a re-review, no 'prior points addressed' recap, since a resolved finding earns silence, not a tally. The verification I did shows up only as the confidence behind the verdict, never written out; if a result must be on the record it is a single inline `note`, not body text."
 
-> "Needs action before merge: [list, or 'none']."
+> "Needs action before merge: [list, or 'none' — and if 'none', this verdict is reported to the user here, not posted to the PR]."
 
 Mechanics that are easy to get wrong:
 
@@ -115,4 +119,5 @@ Mechanics that are easy to get wrong:
 - **Don't let severity labels substitute for analysis.** A finding is blocking because of its written failure mode, not because it pattern-matches "correctness". Small-looking code patterns (an unclosed resource, a swapped identifier) are routinely under-labeled.
 - **Don't restore confidence the author already has.** A PR author shipped because they believe the change is right; a recap of what they got right is cost without benefit. The review's value is the delta — what must change, plus the rare verified-clean item a later reviewer would re-raise. Passing CI is not a reason to soften the action items: both the expensive bugs and the bottleneck live in what the tests already wave through.
 - **Don't acknowledge fixes (especially on re-review).** A human re-reviewer comments only on what's still wrong — they don't reply "thanks, that's resolved" to every thread the author closed, and they don't open the body tallying what got addressed. Fixed and no remaining problem → no comment; the disposition flip to "merge" is the acknowledgment. Writing the confirmation out feels polite, but it reads as slop and buries the one comment that does still need action. This is the gap authors notice most: the re-review that should have been two lines turns into a wall of "looks good now."
+- **Don't let the review read as machine output.** The content rules above are about substance; the *form* matters too, because authors disengage the moment a review smells automated. Two habits give it away even when every finding is sound: a rigid recurring template (verdict header → numbered findings → a verbatim "Needs action before merge:" footer on every PR) and a taxonomy tag stamped on the front of every comment. Write the way a careful human colleague writes — vary the structure to fit the PR, let prose carry blocking-ness, and never post a standalone "ready to merge / LGTM" comment; that verdict goes to the person who asked, in conversation. The goal is a review the author reads as coming from a person who actually looked, not a form a tool filled in.
 - **Don't fake confidence on a PR too large to review.** When a PR is too big or sprawling to review with real confidence as one unit, say so plainly and suggest splitting it (by concern, or behavior-change vs. mechanical churn) rather than producing a sweep that reads as thorough but can't be. A reviewer's honest "this exceeds what I can verify in one pass — here's how I'd split it" is worth more than five findings that miss the sixth. Name what you *did* verify and what you couldn't reach.
